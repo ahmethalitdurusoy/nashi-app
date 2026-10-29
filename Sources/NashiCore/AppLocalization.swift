@@ -86,8 +86,8 @@ public enum AppLocalization {
         guard let table = tables[normalizedLanguage(language)] else { return source }
         if let value = table.entries[source] ?? table.uppercase[source] { return value }
         guard source.count<16_384 else { return source }
-        // Window titles: translate the title, keep the app suffix ("Convert to JPG · Nashi").
-        let suffix = " · Nashi"
+        // Window titles: translate the title, keep the app suffix ("Convert to JPG · UForge").
+        let suffix = " · UForge"
         if source.count > suffix.count, source.hasSuffix(suffix) { return text(String(source.dropLast(suffix.count)), language: language) + suffix }
         for template in table.templates {
             guard let match = template.expression.firstMatch(in:source,range:NSRange(source.startIndex...,in:source)) else { continue }

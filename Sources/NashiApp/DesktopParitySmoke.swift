@@ -55,16 +55,16 @@ import NashiUpdates
         state.libraryQuery="Pasted image";await pause();try await key(125,in:w)
         try check(state.selectedHistoryID==state.filteredHistory.first?.id && state.filteredHistory.count==1,"Down selects a matching Library result")
         try capture(w,"mac-library.png")
-        try await key(49,in:w);guard let preview=NSApp.windows.first(where:{$0.isVisible && $0.title.hasSuffix("· Preview · Nashi")}) else {throw NSError(domain:"Nashi Desktop QA",code:3,userInfo:[NSLocalizedDescriptionKey:"Space did not open the Library preview"])}
+        try await key(49,in:w);guard let preview=NSApp.windows.first(where:{$0.isVisible && $0.title.hasSuffix("· Preview · UForge")}) else {throw NSError(domain:"Nashi Desktop QA",code:3,userInfo:[NSLocalizedDescriptionKey:"Space did not open the Library preview"])}
         try capture(preview,"mac-library-preview.png");try await key(53,in:preview);try check(!preview.isVisible,"Escape closes Library preview")
         try await key(36,in:w);try check(state.inputs==[image] && !state.libraryVisible,"Return reuses the selected Library result")
         try check(AppState(defaults:defaults).history.count==3,"Library search, preview and reuse preserve history")
         var wheelRequests=0;state.onOpenWheel={wheelRequests+=1};w.makeFirstResponder(nil);try await key(36,flags:.maskCommand,in:w);try await key(36,in:w);try check(wheelRequests==2,"Command+Return and Return open selected-file tools")
         state.libraryVisible=true;board.clearContents();try await key(9,flags:.maskCommand,in:w);try check(state.error != nil && state.history.count==3,"Empty clipboard reports an error without changing Library");state.error=nil
-        let shelf=FloatShelfController(urls:[image,text]);shelf.showWindow(nil);await pause();try await key(49,in:shelf.window!);guard let shelfPreview=NSApp.windows.first(where:{$0.isVisible && $0.title.hasSuffix("· Preview · Nashi")}) else{throw NSError(domain:"Nashi Desktop QA",code:5)}
+        let shelf=FloatShelfController(urls:[image,text]);shelf.showWindow(nil);await pause();try await key(49,in:shelf.window!);guard let shelfPreview=NSApp.windows.first(where:{$0.isVisible && $0.title.hasSuffix("· Preview · UForge")}) else{throw NSError(domain:"Nashi Desktop QA",code:5)}
         try await key(124,in:shelfPreview);try check(shelfPreview.title.hasPrefix(text.lastPathComponent),"Float Space opens the shared batch preview and Right navigates");try await key(53,in:shelfPreview);shelf.close()
 
-        state.filePreview.show([image,text]);await pause();guard let batch=NSApp.windows.first(where:{$0.isVisible && $0.title.hasSuffix("· Preview · Nashi")}) else{throw NSError(domain:"Nashi Desktop QA",code:4)}
+        state.filePreview.show([image,text]);await pause();guard let batch=NSApp.windows.first(where:{$0.isVisible && $0.title.hasSuffix("· Preview · UForge")}) else{throw NSError(domain:"Nashi Desktop QA",code:4)}
         try await key(124,in:batch);try check(batch.title.hasPrefix(text.lastPathComponent),"Preview Right navigates a batch")
         try await key(53,in:batch);try check(FileManager.default.fileExists(atPath:image.path),"Preview leaves imported originals intact")
         // The only imported files from this isolated run live outside its bundle; remove its fixtures.

@@ -35,7 +35,7 @@ import NashiCore
                         Button("Cancel setup", action: model.cancel).accessibilityIdentifier("SetupCancel").keyboardShortcut(.cancelAction)
                     }
                     Spacer()
-                    Button(model.status.ready ? "Continue to Nashi" : "Download missing tools") {
+                    Button(model.status.ready ? "Continue to UForge" : "Download missing tools") {
                         if model.status.ready { onDone() } else { model.install() }
                     }.buttonStyle(NashiButtonStyle(.primary)).disabled(model.working)
                         .accessibilityIdentifier("SetupContinue").keyboardShortcut(.defaultAction)

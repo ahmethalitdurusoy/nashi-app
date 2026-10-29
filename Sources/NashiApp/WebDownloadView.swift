@@ -173,7 +173,7 @@ struct WebDownloadView:View {
                     if let error=model.error { Label(error,systemImage:"exclamationmark.circle").font(.callout).foregroundStyle(.orange).fixedSize(horizontal:false,vertical:true) }
                     if state.working,!model.downloading { Text("Another task is running. Your link is ready when it finishes.").font(.caption).foregroundStyle(.secondary) }
                     VStack(alignment:.leading,spacing:7) {
-                        LText(model.shortcutAvailable ? "Copy a link → ⌃⇧D, or drag it with ⌘.":"Copy a link, then choose Download Link from the Nashi menu.").font(.caption)
+                        LText(model.shortcutAvailable ? "Copy a link → ⌃⇧D, or drag it with ⌘.":"Copy a link, then choose Download Link from the UForge menu.").font(.caption)
                         Text("Instagram photo posts open a photo selection. For videos, use the share link; for other photos, drag the image or use Copy Image Address. Public media only; login-required and protected items may be unavailable.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                     }
                 }.padding(24)
@@ -183,7 +183,7 @@ struct WebDownloadView:View {
                 if model.downloading { Button("Cancel download") { state.token.cancel() } }
                 else if !model.completed.isEmpty { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(model.completed) } }
                 Spacer()
-                if !model.completed.isEmpty { Button("Use in Nashi") { model.onUseFiles?() }.buttonStyle(NashiButtonStyle(.primary)) }
+                if !model.completed.isEmpty { Button("Use in UForge") { model.onUseFiles?() }.buttonStyle(NashiButtonStyle(.primary)) }
                 else if let info=model.info { Button(!info.photos.isEmpty ? "Download \(model.selectedPhotos.count) \(model.selectedPhotos.count==1 ? "photo":"photos")":model.mode == .audioMP3 ? "Download MP3":info.kind == .image ? "Download image":"Download") { model.download() }.buttonStyle(NashiButtonStyle(.primary)).disabled(model.downloading || state.working || (!info.photos.isEmpty && model.selectedPhotos.isEmpty)) }
                 else { Button("Check link") { model.inspect() }.buttonStyle(NashiButtonStyle(.primary)).disabled(model.linkText.isEmpty || model.inspecting) }
             }.padding(20)

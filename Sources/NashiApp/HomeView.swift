@@ -25,7 +25,7 @@ struct HomeView:View {
         VStack(spacing:0) {
             HStack(spacing:10) {
                 NashiMark(size:40)
-                Text("Nashi").font(.system(size:19,weight:.bold,design:.rounded)).tracking(-0.5)
+                Text("UForge").font(.system(size:19,weight:.bold,design:.rounded)).tracking(-0.5)
                 Spacer()
                 if Bundle.main.object(forInfoDictionaryKey:"NashiExternalTools") as? Bool == true {
                     Button(toolsReady ? "Tools ready":"Finish setup") {NotificationCenter.default.post(name:.showToolSetup,object:nil)}
@@ -102,7 +102,7 @@ struct HomeView:View {
                             .nashiCard(radius:16).overlay(RoundedRectangle(cornerRadius:16).strokeBorder(state.selectedHistoryID==job.id ? Color.nashi:Color.clear,lineWidth:1.5))
                             .contentShape(Rectangle()).onTapGesture {state.selectedHistoryID=job.id;librarySearchFocused=false}.id(job.id)
                     }
-                    Text("↑/↓ choose · Space preview · Return use in Nashi").font(.caption).foregroundStyle(.secondary)
+                    Text("↑/↓ choose · Space preview · Return use in UForge").font(.caption).foregroundStyle(.secondary)
                 }.padding(28)
             }.onChange(of:state.selectedHistoryID) { id in if let id {scroll.scrollTo(id)} }
         }

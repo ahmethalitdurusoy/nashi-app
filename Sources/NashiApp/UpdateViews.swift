@@ -13,8 +13,8 @@ struct UpdateBanner:View {
         HStack(spacing:13) {
             Image(systemName:"arrow.down.circle.fill").font(.system(size:27)).foregroundStyle(NashiPalette.forest)
             VStack(alignment:.leading,spacing:4) {
-                Text("A fresh Nashi is ready.").font(.system(size:13,weight:.bold,design:.rounded))
-                Text(updater.waitingForCurrentTask ? "Your task will finish before Nashi restarts.":"Version \(version) · Install when you’re ready.").font(.caption).foregroundStyle(.secondary)
+                Text("A fresh UForge is ready.").font(.system(size:13,weight:.bold,design:.rounded))
+                Text(updater.waitingForCurrentTask ? "Your task will finish before UForge restarts.":"Version \(version) · Install when you’re ready.").font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength:12)
             Button("Update…") { updater.checkForUpdates() }
@@ -37,7 +37,7 @@ struct UpdateSettingsView:View {
                 HStack(spacing:17) {
                     NashiMark(size:62,happy:updater.availableVersion != nil)
                     VStack(alignment:.leading,spacing:6) {
-                        Text("Nashi \(version)").font(.system(size:21,weight:.bold,design:.rounded))
+                        Text("UForge \(version)").font(.system(size:21,weight:.bold,design:.rounded))
                         Text("Build \(build)").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -67,7 +67,7 @@ struct UpdateSettingsView:View {
                     GroupBox {
                         VStack(alignment:.leading,spacing:17) {
                             Toggle("Check for updates automatically",isOn:Binding(get:{updater.automaticallyChecksForUpdates},set:updater.setAutomaticChecks))
-                            Text("Nashi checks once an hour while it’s running. You choose when to download and install.").font(.caption).foregroundStyle(.secondary)
+                            Text("UForge checks once an hour while it’s running. You choose when to download and install.").font(.caption).foregroundStyle(.secondary)
                             Divider()
                             HStack {
                                 VStack(alignment:.leading,spacing:5) {
@@ -111,8 +111,8 @@ struct UpdateConnectionView:View {
     var body:some View {
         ScrollView {
             VStack(alignment:.leading,spacing:20) {
-                NashiPageHeading(eyebrow:"Update connection",title:"Fresh versions, one click away.",subtitle:"Connect your GitHub releases once. Nashi handles the next update checks.")
-                Text("Nashi \(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "Development") · Build \(Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String ?? "—")")
+                NashiPageHeading(eyebrow:"Update connection",title:"Fresh versions, one click away.",subtitle:"Connect your GitHub releases once. UForge handles the next update checks.")
+                Text("UForge \(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "Development") · Build \(Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String ?? "—")")
                     .font(.caption).foregroundStyle(.secondary)
                 if let connected=updater.repository {
                     Label("Connected to \(connected.slug)",systemImage:"checkmark.circle.fill")
@@ -172,7 +172,7 @@ struct UpdateConnectionView:View {
                         Button(updater.availableVersion == nil ? "Check for Updates…":"Update…") { updater.checkForUpdates() }
                             .buttonStyle(NashiButtonStyle(.secondary,compact:true)).disabled(!updater.canCheckForUpdates || updater.isBusy)
                     }
-                    Toggle("Check automatically while Nashi is running",isOn:Binding(get:{updater.automaticallyChecksForUpdates},set:updater.setAutomaticChecks))
+                    Toggle("Check automatically while UForge is running",isOn:Binding(get:{updater.automaticallyChecksForUpdates},set:updater.setAutomaticChecks))
                         .font(.system(size:12))
                     if let lastError=updater.lastError { Label(lastError,systemImage:"exclamationmark.circle").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true) }
                 }

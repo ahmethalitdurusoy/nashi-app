@@ -28,7 +28,7 @@ struct SuccessNotice {
         let size=NSSize(width:min(560,visible.width-32),height:88)
         let frame=NSRect(x:visible.midX-size.width/2,y:visible.minY+28,width:size.width,height:size.height)
         let toast=SuccessToastPanel(contentRect:frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
-        toast.title="Nashi — Complete"
+        toast.title="UForge — Complete"
         toast.isReleasedWhenClosed=false
         toast.isOpaque=false
         toast.backgroundColor = .clear

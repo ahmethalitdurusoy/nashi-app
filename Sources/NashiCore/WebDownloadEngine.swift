@@ -220,7 +220,7 @@ public enum WebDownloadEngine {
     }
     public static func friendlyError(_ diagnostic:String)->String {
         let lower=diagnostic.lowercased()
-        if lower.contains("sign in") || lower.contains("login") || lower.contains("cookies") || lower.contains("private") || lower.contains("age-restricted") { return "This link requires a login or is restricted. Try a public share link; Nashi does not read your browser sessions." }
+        if lower.contains("sign in") || lower.contains("login") || lower.contains("cookies") || lower.contains("private") || lower.contains("age-restricted") { return "This link requires a login or is restricted. Try a public share link; UForge does not read your browser sessions." }
         if lower.contains("drm") || lower.contains("protected") { return "This media is protected and cannot be downloaded here." }
         if lower.contains("unsupported url") || lower.contains("no video") || lower.contains("no media") { return "No downloadable media was found. Use the video's share link, or Copy Image Address for a photo." }
         if lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests") { return "The site is limiting requests. Wait a little and try again." }

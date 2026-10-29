@@ -14,7 +14,7 @@ import Combine
         let width=min(560,visible.width-32)
         let frame=NSRect(x:visible.midX-width/2,y:visible.minY+28,width:width,height:104)
         let toast=ProgressToastPanel(contentRect:frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
-        toast.title="Nashi — Progress"
+        toast.title="UForge — Progress"
         toast.isReleasedWhenClosed=false;toast.isOpaque=false;toast.backgroundColor = .clear
         toast.hasShadow=true;toast.level = .floating;toast.isFloatingPanel=true
         toast.hidesOnDeactivate=false;toast.animationBehavior = .none

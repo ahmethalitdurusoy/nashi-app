@@ -111,7 +111,7 @@ public final class KeychainUpdateCredentialStore: UpdateCredentialStore, @unchec
         defer { Self.interactionLock.unlock() }
         let query = query(for: repository)
         let attributes: [String: Any] = [kSecValueData as String: Data(token.utf8),
-                                       kSecAttrLabel as String: "Nashi updates · \(repository.slug)"]
+                                       kSecAttrLabel as String: "UForge updates · \(repository.slug)"]
         var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
             var item = query

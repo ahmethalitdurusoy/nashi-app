@@ -120,7 +120,7 @@ final class WheelView:NSView {
     var onDragInputs:(([URL])->Void)?
     private var tracking:NSTrackingArea?
     override var acceptsFirstResponder:Bool { true }
-    override init(frame:NSRect) { super.init(frame:frame);registerForDraggedTypes(WebLinkPayload.pasteboardTypes);setAccessibilityRole(.group);setAccessibilityLabel("Nashi \(mode.rawValue) wheel") }
+    override init(frame:NSRect) { super.init(frame:frame);registerForDraggedTypes(WebLinkPayload.pasteboardTypes);setAccessibilityRole(.group);setAccessibilityLabel("UForge \(mode.rawValue) wheel") }
     required init?(coder:NSCoder) { fatalError() }
     override func updateTrackingAreas() { if let tracking { removeTrackingArea(tracking) };tracking=NSTrackingArea(rect:bounds,options:[.activeAlways,.mouseMoved,.mouseEnteredAndExited,.inVisibleRect],owner:self);addTrackingArea(tracking!);super.updateTrackingAreas() }
     var geometry:WheelGeometry { WheelGeometry(bounds:bounds,count:items.count) }
@@ -183,7 +183,7 @@ final class WheelView:NSView {
     }
     func updateSelection(_ point:NSPoint) { selected=items.indices.first{petal($0).contains(point)} }
     func updateAccessibility() {
-        setAccessibilityLabel(inputs.first?.isFileURL == false ? "Nashi web media wheel":"Nashi \(mode.rawValue) wheel")
+        setAccessibilityLabel(inputs.first?.isFileURL == false ? "UForge web media wheel":"UForge \(mode.rawValue) wheel")
         let children=items.enumerated().map { index,item -> WheelAccessibilityItem in
             let child=WheelAccessibilityItem();child.setAccessibilityRole(.button);child.setAccessibilityEnabled(true);child.setAccessibilityLabel(L10n.text(item.operation?.title ?? item.title));child.setAccessibilityParent(self)
             if let window { child.setAccessibilityFrame(window.convertToScreen(convert(petal(index).bounds,to:nil))) }
@@ -255,7 +255,7 @@ final class WheelAccessibilityItem:NSAccessibilityElement {
         #if DEBUG
         let trace="drag down=\(down) flags=\(flags.rawValue) pasteboard=\(board.changeCount) shown=\(shown)"
         if trace != traceState {
-            traceState=trace;NSLog("Nashi %@",trace)
+            traceState=trace;NSLog("UForge %@",trace)
             let url=FileManager.default.temporaryDirectory.appendingPathComponent("nashi-drag-\(ProcessInfo.processInfo.processIdentifier).log")
             if !FileManager.default.fileExists(atPath:url.path) { FileManager.default.createFile(atPath:url.path,contents:nil,attributes:[.posixPermissions:0o600]) }
             if let handle=try? FileHandle(forWritingTo:url) { _ = try? handle.seekToEnd();try? handle.write(contentsOf:Data((trace+"\n").utf8));try? handle.close() }

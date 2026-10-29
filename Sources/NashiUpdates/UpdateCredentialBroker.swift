@@ -7,7 +7,7 @@ enum UpdateCredentialBrokerError: Error, LocalizedError, Equatable {
     case unavailable, identity, connection, denied, timeout
     var errorDescription: String? {
         switch self {
-        case .identity: return "The update connection could not be verified. Reinstall a verified Nashi build to repair it."
+        case .identity: return "The update connection could not be verified. Reinstall a verified UForge build to repair it."
         case .denied: return "The saved update token is unavailable. Open Update Connection to authorize access."
         case .connection, .timeout, .unavailable: return "The saved update connection did not respond. Try again."
         }
