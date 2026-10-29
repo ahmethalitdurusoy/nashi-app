@@ -53,7 +53,7 @@ final class UpdateCredentialBrokerTests: XCTestCase {
     }
 
     func testNashiStoreUsesTheExistingAccountForReadWriteAndRemove() async throws {
-        let config=try brokerConfiguration(),connection=SyntheticBrokerTransport(expectedRepository:"orkunisitmak/tangerine")
+        let config=try brokerConfiguration(),connection=SyntheticBrokerTransport(expectedRepository:"ahmethalitdurusoy/nashi-app")
         let client=UpdateCredentialBrokerClient(configuration:{config},validate:{_ in},connect:{_ in connection})
         let store=BrokerUpdateCredentialStore(client:client)
         let token=try await store.loadToken(for:UpdateBrandMigration.current)

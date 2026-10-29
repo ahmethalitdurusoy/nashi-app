@@ -308,7 +308,7 @@ import Sparkle
         do {
             guard let bridge, let url = request.url else { throw ConnectionError.reconnect }
             request.url = try bridge.archiveURL(for: url)
-            request.allHTTPHeaderFields = ["User-Agent": "Nashi updater"]
+            request.allHTTPHeaderFields = ["User-Agent": "UForge updater"]
         } catch {
             // Fail closed even for Sparkle's resumed/delta download paths.
             request.url = URL(string: "http://127.0.0.1:1/unavailable")!

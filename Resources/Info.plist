@@ -11,7 +11,7 @@
 		<string>fr</string>
 	</array>
 	<key>CFBundleDisplayName</key>
-	<string>Nashi</string>
+	<string>UForge</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -30,9 +30,9 @@
 	<key>CFBundleIconFile</key>
 	<string>NashiIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>local.tangerine.replica</string>
+	<string>com.unqsoft.uforge</string>
 	<key>CFBundleName</key>
-	<string>Nashi</string>
+	<string>UForge</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -61,7 +61,7 @@
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<key>SUEnableSystemProfiling</key>
 	<false/>
 	<key>SUPublicEDKey</key>

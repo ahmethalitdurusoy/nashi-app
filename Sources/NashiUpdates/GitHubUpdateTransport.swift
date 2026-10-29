@@ -220,7 +220,7 @@ public final class GitHubUpdateClient: @unchecked Sendable {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue("Nashi-Private-Updater", forHTTPHeaderField: "User-Agent")
+        request.setValue("UForge-Private-Updater", forHTTPHeaderField: "User-Agent")
         if let token, !token.isEmpty {
             guard token.utf8.count <= 1024, token.unicodeScalars.allSatisfy({ $0.value >= 33 && $0.value <= 126 }) else {
                 throw GitHubUpdateTransportError.invalidToken
@@ -247,7 +247,7 @@ public final class GitHubUpdateClient: @unchecked Sendable {
         // Build a new request, rather than copying any authorization/cookies across origins.
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
-        request.setValue("Nashi-Private-Updater", forHTTPHeaderField: "User-Agent")
+        request.setValue("UForge-Private-Updater", forHTTPHeaderField: "User-Agent")
         return request
     }
 

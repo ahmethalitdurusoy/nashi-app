@@ -28,12 +28,12 @@ final class GitHubUpdateTransportTests: XCTestCase {
         return URLSession(configuration: configuration)
     }
 
-    func testRebrandFetchesCurrentRepositoryWithoutContactingTheOldName() async throws {
+    func testLatestFeedFetchesOnlyTheSelectedRepository() async throws {
         var paths:[String]=[]
         GitHubFixtureProtocol.install { request in
             let path=request.url!.path;paths.append(path)
             XCTAssertEqual(request.value(forHTTPHeaderField:"Authorization"),"Bearer "+self.fakeToken)
-            XCTAssertTrue(path.hasPrefix("/repos/orkunisitmak/nashi/"))
+            XCTAssertTrue(path.hasPrefix("/repos/ahmethalitdurusoy/nashi-app/"))
             if path.hasSuffix("/releases/latest") { return .init(body:try self.json(["draft":false,"prerelease":false,"assets":[self.asset(self.feed.count,name:"appcast.xml")]])) }
             return .init(body:self.feed)
         }
@@ -41,28 +41,21 @@ final class GitHubUpdateTransportTests: XCTestCase {
         let (client,data)=try await UpdateBrandMigration.latestFeed(repository:UpdateBrandMigration.current,token:fakeToken,configuration:configuration)
         XCTAssertEqual(client.repository,UpdateBrandMigration.current);XCTAssertEqual(data,feed);XCTAssertEqual(paths.count,2)
     }
-    func testRebrandUsesTheExactPreviousRepositoryOnlyBeforeRename() async throws {
+    func testLatestFeedDoesNotFallBackWhenTheRepositoryHasNoRelease() async throws {
         var paths:[String]=[]
-        GitHubFixtureProtocol.install { request in
-            let path=request.url!.path;paths.append(path)
-            XCTAssertEqual(request.url?.host,"api.github.com")
-            XCTAssertEqual(request.value(forHTTPHeaderField:"Authorization"),"Bearer "+self.fakeToken)
-            if path.hasPrefix("/repos/orkunisitmak/nashi/") { return .init(status:404,body:Data()) }
-            XCTAssertTrue(path.hasPrefix("/repos/orkunisitmak/tangerine/"))
-            if path.hasSuffix("/releases/latest") { return .init(body:try self.json(["draft":false,"prerelease":false,"assets":[self.asset(self.feed.count,name:"appcast.xml")]])) }
-            return .init(body:self.feed)
-        }
+        GitHubFixtureProtocol.install { request in paths.append(request.url!.path);return .init(status:404,body:Data()) }
         let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[GitHubFixtureProtocol.self]
-        let (client,data)=try await UpdateBrandMigration.latestFeed(repository:UpdateBrandMigration.current,token:fakeToken,configuration:configuration)
-        XCTAssertEqual(client.repository,UpdateBrandMigration.previous);XCTAssertEqual(data,feed);XCTAssertEqual(paths.count,3)
+        do { _=try await UpdateBrandMigration.latestFeed(repository:UpdateBrandMigration.current,token:fakeToken,configuration:configuration);XCTFail("A missing release must not fall back to another repository") }
+        catch {}
+        XCTAssertEqual(paths,["/repos/ahmethalitdurusoy/nashi-app/releases/latest"])
     }
-    func testRebrandDoesNotFallBackOnAuthorizationFailure() async throws {
+    func testLatestFeedDoesNotFallBackOnAuthorizationFailure() async throws {
         var paths:[String]=[]
         GitHubFixtureProtocol.install { request in paths.append(request.url!.path);return .init(status:403,body:Data()) }
         let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[GitHubFixtureProtocol.self]
         do { _=try await UpdateBrandMigration.latestFeed(repository:UpdateBrandMigration.current,token:fakeToken,configuration:configuration);XCTFail("Authorization failure must fail closed") }
         catch { XCTAssertEqual(error as? GitHubUpdateTransportError,.forbidden) }
-        XCTAssertEqual(paths,["/repos/orkunisitmak/nashi/releases/latest"])
+        XCTAssertEqual(paths,["/repos/ahmethalitdurusoy/nashi-app/releases/latest"])
     }
 
     func testRepositoryValidationAndCodableCannotBypassScope() throws {
