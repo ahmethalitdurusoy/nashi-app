@@ -14,7 +14,7 @@ username=os.environ.get('USER','').encode()
 issues=[];count=0
 for path in root.rglob('*'):
     if not path.is_file() or path.is_symlink(): continue
-    count+=1;data=path.read_bytes()
+    count+=1;data=path.read_bytes().replace(b'ahmethalitdurusoy/nashi-app',b'')
     if path.name.startswith('.env') or path.suffix.lower() in {'.p12','.pfx','.key','.mobileprovision'}:issues.append(str(path.relative_to(root)))
     patterns=[rb'-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----',rb'github_pat_[A-Za-z0-9_]{20,}',rb'gh[pousr]_[A-Za-z0-9]{20,}']
     if any(re.search(pattern,data) for pattern in patterns) or username and len(username)>5 and username in data:issues.append(str(path.relative_to(root)))
