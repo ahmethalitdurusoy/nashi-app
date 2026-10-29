@@ -26,6 +26,9 @@ struct HomeView:View {
             HStack(spacing:10) {
                 NashiMark(size:40)
                 Text("UForge").font(.system(size:19,weight:.bold,design:.rounded)).tracking(-0.5)
+                if let version=Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String {
+                    Text(verbatim:"v"+version).font(.system(size:11,weight:.medium)).foregroundStyle(.secondary)
+                }
                 Spacer()
                 if Bundle.main.object(forInfoDictionaryKey:"NashiExternalTools") as? Bool == true {
                     Button(toolsReady ? "Tools ready":"Finish setup") {NotificationCenter.default.post(name:.showToolSetup,object:nil)}
