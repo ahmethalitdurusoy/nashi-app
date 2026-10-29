@@ -57,15 +57,15 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>SUAllowsAutomaticUpdates</key>
-	<false/>
+	<true/>
 	<key>SUAutomaticallyUpdate</key>
-	<false/>
+	<true/>
 	<key>SUEnableAutomaticChecks</key>
-	<false/>
+	<true/>
 	<key>SUEnableSystemProfiling</key>
 	<false/>
 	<key>SUPublicEDKey</key>
-	<string>VPJpPpgXKda4c3ZOvP4zH8koa3ht1jm6lJWNBr+2saU=</string>
+	<string>+lFNDf9xYJHbgSOCCBYv8KxvvaoHilx0nDGcX456pcM=</string>
 	<key>SURequireSignedFeed</key>
 	<true/>
 	<key>SUScheduledCheckInterval</key>

@@ -276,7 +276,7 @@
   "Updates are being set up": "Les mises à jour sont en cours de configuration",
   "Your current task will finish before an update restarts the app.": "Votre tâche en cours se terminera avant qu’une mise à jour ne redémarre l’app.",
   "Public updates work without a token.": "Les mises à jour publiques fonctionnent sans jeton.",
-  "UForge checks once an hour while it’s running. You choose when to download and install.": "UForge vérifie une fois par heure pendant son exécution. Vous choisissez quand télécharger et installer.",
+  "UForge checks once an hour while it’s running and installs updates automatically.": "UForge vérifie une fois par heure pendant son exécution et installe les mises à jour automatiquement.",
   "Updates are verified before installation. Your settings and recent history stay with you.": "Les mises à jour sont vérifiées avant l’installation. Vos réglages et votre historique récent sont conservés.",
   "Updates are signed and verified before installation. Changing repositories keeps the same trusted signing key. Your settings and files stay with you.": "Les mises à jour sont signées et vérifiées avant l’installation. Changer de dépôt conserve la même clé de signature de confiance. Vos réglages et vos fichiers sont conservés.",
   "Updates are downloaded from the public UForge repository and verified before installation. No GitHub account or token is required.": "Les mises à jour sont téléchargées depuis le dépôt public de UForge et vérifiées avant l’installation. Aucun compte GitHub ni jeton n’est requis.",

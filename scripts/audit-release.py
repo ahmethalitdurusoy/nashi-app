@@ -4,8 +4,8 @@ import os, re, sys, plistlib
 from pathlib import Path
 root=Path(sys.argv[1]).resolve()
 info=plistlib.loads((root/'Contents/Info.plist').read_bytes())
-assert info.get('NashiPublicUpdateRepository')=='orkunisitmak/nashi-app'
-assert info.get('SUFeedURL')=='https://github.com/orkunisitmak/nashi-app/releases/latest/download/appcast.xml'
+assert info.get('NashiPublicUpdateRepository')=='ahmethalitdurusoy/nashi-app'
+assert info.get('SUFeedURL')=='https://github.com/ahmethalitdurusoy/nashi-app/releases/latest/download/appcast.xml'
 assert info.get('NashiExternalTools') is True
 assert not (root/'Contents/XPCServices').exists(), 'Public archive must not include a private credential broker'
 assert not (root/'Contents/Resources/Tools/ffmpeg').exists(), 'Upstream media tools use direct first-use acquisition'

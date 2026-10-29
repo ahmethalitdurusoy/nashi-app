@@ -276,7 +276,7 @@
   "Updates are being set up": "Güncellemeler ayarlanıyor",
   "Your current task will finish before an update restarts the app.": "Güncelleme uygulamayı yeniden başlatmadan önce mevcut işlemin tamamlanır.",
   "Public updates work without a token.": "Herkese açık güncellemeler için token gerekmez.",
-  "UForge checks once an hour while it’s running. You choose when to download and install.": "UForge çalışırken saatte bir denetler. İndirme ve kurulum zamanını sen seçersin.",
+  "UForge checks once an hour while it’s running and installs updates automatically.": "UForge çalışırken saatte bir denetler ve güncellemeleri otomatik olarak kurar.",
   "Updates are verified before installation. Your settings and recent history stay with you.": "Güncellemeler kurulmadan önce doğrulanır. Ayarların ve son işlem geçmişin korunur.",
   "Updates are signed and verified before installation. Changing repositories keeps the same trusted signing key. Your settings and files stay with you.": "Güncellemeler imzalanır ve kurulmadan önce doğrulanır. Depo değişse de güvenilir imza anahtarı aynı kalır. Ayarların ve dosyaların korunur.",
   "Updates are downloaded from the public UForge repository and verified before installation. No GitHub account or token is required.": "Güncellemeler herkese açık UForge deposundan indirilir ve kurulmadan önce doğrulanır. GitHub hesabı veya token gerekmez.",

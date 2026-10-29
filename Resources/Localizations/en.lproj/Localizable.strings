@@ -2047,7 +2047,7 @@
 "Try a clearer image or another PDF." = "Try a clearer image or another PDF.";
 "Try feedback" = "Try feedback";
 "Turn off uniform width to preserve this PDF’s form fields, attachments, links or navigation." = "Turn off uniform width to preserve this PDF’s form fields, attachments, links or navigation.";
-"UFORGE CHECKS ONCE AN HOUR WHILE IT’S RUNNING. YOU CHOOSE WHEN TO DOWNLOAD AND INSTALL." = "UFORGE CHECKS ONCE AN HOUR WHILE IT’S RUNNING. YOU CHOOSE WHEN TO DOWNLOAD AND INSTALL.";
+"UFORGE CHECKS ONCE AN HOUR WHILE IT’S RUNNING AND INSTALLS UPDATES AUTOMATICALLY." = "UFORGE CHECKS ONCE AN HOUR WHILE IT’S RUNNING AND INSTALLS UPDATES AUTOMATICALLY.";
 "UFORGE IS ALREADY RUNNING BUT IS STILL STARTING. OPEN IT FROM THE SYSTEM TRAY OR TRY AGAIN IN A MOMENT." = "UFORGE IS ALREADY RUNNING BUT IS STILL STARTING. OPEN IT FROM THE SYSTEM TRAY OR TRY AGAIN IN A MOMENT.";
 "UFORGE IS STILL RUNNING." = "UFORGE IS STILL RUNNING.";
 "UFORGE SAVES RESULTS BESIDE THE ORIGINALS. ALLOW A FOLDER ONCE TO INCLUDE EVERY FOLDER INSIDE IT." = "UFORGE SAVES RESULTS BESIDE THE ORIGINALS. ALLOW A FOLDER ONCE TO INCLUDE EVERY FOLDER INSIDE IT.";
@@ -2056,7 +2056,7 @@
 "UFORGE UPDATE COULD NOT FINISH" = "UFORGE UPDATE COULD NOT FINISH";
 "UFORGE · FEATURES & SHORTCUTS" = "UFORGE · FEATURES & SHORTCUTS";
 "UForge Settings" = "UForge Settings";
-"UForge checks once an hour while it’s running. You choose when to download and install." = "UForge checks once an hour while it’s running. You choose when to download and install.";
+"UForge checks once an hour while it’s running and installs updates automatically." = "UForge checks once an hour while it’s running and installs updates automatically.";
 "UForge is already running but is still starting. Open it from the system tray or try again in a moment." = "UForge is already running but is still starting. Open it from the system tray or try again in a moment.";
 "UForge is still running." = "UForge is still running.";
 "UForge saves results beside the originals. Allow a folder once to include every folder inside it." = "UForge saves results beside the originals. Allow a folder once to include every folder inside it.";

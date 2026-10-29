@@ -67,7 +67,7 @@ struct UpdateSettingsView:View {
                     GroupBox {
                         VStack(alignment:.leading,spacing:17) {
                             Toggle("Check for updates automatically",isOn:Binding(get:{updater.automaticallyChecksForUpdates},set:updater.setAutomaticChecks))
-                            Text("UForge checks once an hour while it’s running. You choose when to download and install.").font(.caption).foregroundStyle(.secondary)
+                            Text("UForge checks once an hour while it’s running and installs updates automatically.").font(.caption).foregroundStyle(.secondary)
                             Divider()
                             HStack {
                                 VStack(alignment:.leading,spacing:5) {
