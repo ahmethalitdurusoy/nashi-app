@@ -38,7 +38,7 @@ public enum WebDownloadEngine {
         defer { session.invalidateAndCancel() }
         if WebMediaDragPayload.isInstagramPhotoPost(url) {
             let args=try baseArguments(photoPost:true)+["--ignore-no-formats-error","--skip-download","--dump-single-json","--no-progress","--",url.absoluteString]
-            let data=try await Task.detached { try WebDownloadProcess.run(Dependencies.executable("yt-dlp"),args,token:token,timeout:100) }.value
+            let data=try await DownloaderUpdates.retryingAfterUpdate(token:token) { try await Task.detached { try WebDownloadProcess.run(Dependencies.executable("yt-dlp"),args,token:token,timeout:100) }.value }
             try token.check();try Task.checkCancellation()
             return try InstagramPhotos.parse(data,url:url)
         }
@@ -60,7 +60,7 @@ public enum WebDownloadEngine {
         }
         try Task.checkCancellation();try token.check()
         let args=try baseArguments()+["--skip-download","--dump-single-json","--no-progress","--",url.absoluteString]
-        let data=try await Task.detached { try WebDownloadProcess.run(Dependencies.executable("yt-dlp"),args,token:token,timeout:100) }.value
+        let data=try await DownloaderUpdates.retryingAfterUpdate(token:token) { try await Task.detached { try WebDownloadProcess.run(Dependencies.executable("yt-dlp"),args,token:token,timeout:100) }.value }
         try Task.checkCancellation();try token.check()
         return try parseMetadata(data,url:url)
     }
@@ -96,7 +96,7 @@ public enum WebDownloadEngine {
             results=try await downloadDirect(info,mode:mode,directory:area.directory,token:token,progress:progress)
         } else {
             let arguments=try downloadArguments(info,mode:mode,maximumHeight:maximumHeight,directory:area.directory)
-            let data=try await Task.detached { try WebDownloadProcess.run(Dependencies.executable("yt-dlp"),arguments,token:token,timeout:21_600,progress:progress) }.value
+            let data=try await DownloaderUpdates.retryingAfterUpdate(token:token) { try await Task.detached { try WebDownloadProcess.run(Dependencies.executable("yt-dlp"),arguments,token:token,timeout:21_600,progress:progress) }.value }
             results=String(decoding:data,as:UTF8.self).split(separator:"\n").compactMap { line in
                 guard line.hasPrefix("NASHI_FILE:"),let encoded=String(line.dropFirst("NASHI_FILE:".count)).data(using:.utf8),
                       let path=(try? JSONSerialization.jsonObject(with:encoded,options:.fragmentsAllowed)) as? String else { return nil }
