@@ -15,6 +15,16 @@ enum PDFOfficeCodec {
         return CGRect(origin: .zero, size: rotated ? CGSize(width: box.height, height: box.width) : box.size)
     }
 
+    /// PDFKit renders thumbnails in the display's colour space (Display P3 on
+    /// most Macs). PowerPoint, Keynote exports and the web read untagged or
+    /// ignore embedded profiles, so office images are converted to sRGB.
+    static func sRGB(_ image: CGImage) -> CGImage? {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return context.makeImage()
+    }
+
     static func rasterPNG(_ page: PDFPage, rect crop: CGRect? = nil, dpi: Int = 144, token: CancellationToken) throws -> Data {
         try token.check()
         let bounds = crop ?? visualBounds(page)
@@ -136,7 +146,7 @@ enum PDFOfficeCodec {
             let size = NSSize(width: max(1, bounds.width * 2), height: max(1, bounds.height * 2))
             let image = page.thumbnail(of: size, for: .cropBox)
             var rect = CGRect(origin: .zero, size: size)
-            guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil), let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else {
+            guard let rendered = image.cgImage(forProposedRect: &rect, context: nil, hints: nil), let cg = sRGB(rendered), let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else {
                 throw NashiError.failed("PDF page \(index + 1) could not be rendered.")
             }
             // A presentation has one shared canvas. Match the first displayed

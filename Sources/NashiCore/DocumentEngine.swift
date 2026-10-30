@@ -157,8 +157,12 @@ public enum DocumentEngine {
         defer { try? fm.removeItem(at: profile) }
         let profileUser = profile.appendingPathComponent("user", isDirectory: true)
         try fm.createDirectory(at: profileUser, withIntermediateDirectories: true)
+        // CSV and TSV are data: numbers keep a "." decimal separator whatever
+        // the Mac's region (a Turkish Mac would otherwise turn 12.5 into
+        // "12,5"). Other formats keep the user's regional number display.
+        let dataLocale = ["csv", "tsv"].contains(format) ? "<item oor:path=\"/org.openoffice.Setup/L10N\"><prop oor:name=\"ooSetupSystemLocale\" oor:op=\"fuse\"><value>en-US</value></prop></item>" : ""
         let config = """
-        <?xml version="1.0" encoding="UTF-8"?><oor:items xmlns:oor="http://openoffice.org/2001/registry"><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item><item oor:path="/org.openoffice.Office.Common/Load"><prop oor:name="UpdateLinkMode" oor:op="fuse"><value>0</value></prop></item></oor:items>
+        <?xml version="1.0" encoding="UTF-8"?><oor:items xmlns:oor="http://openoffice.org/2001/registry"><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item><item oor:path="/org.openoffice.Office.Common/Load"><prop oor:name="UpdateLinkMode" oor:op="fuse"><value>0</value></prop></item>\(dataLocale)</oor:items>
         """
         try config.write(to: profileUser.appendingPathComponent("registrymodifications.xcu"), atomically: true, encoding: .utf8)
         let executable = try Dependencies.executable("soffice")
