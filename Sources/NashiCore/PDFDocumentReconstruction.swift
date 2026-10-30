@@ -82,7 +82,7 @@ enum PDFDocumentReconstruction {
         var headerTop: CGFloat = 0, headerBottom: CGFloat = 0
         var footerTop: CGFloat = 0, footerBottom: CGFloat = 0
     }
-    private struct SpanKey: Hashable { var style: TextStyle; var scale: Int }
+    private struct SpanKey: Hashable { var style: TextStyle; var scale: Int; var tracking: Int }
     /// Rules and shading of a table read from the page artwork. Positions are
     /// page coordinates: column lines left to right, row lines top to bottom.
     private struct Grid {
@@ -121,14 +121,15 @@ enum PDFDocumentReconstruction {
         var grids: [String: Grid] = [:]
         /// Boxes on the current page and the blocks inside each.
         var boxes: [(box: Box, blocks: [Block])] = []
-        mutating func span(_ run: Run, scale: Int = 100) -> String { "<text:span text:style-name=\"\(spanStyle(run.style, scale: scale))\">\(DocumentText.escapeXML(run.text))</text:span>" }
-        mutating func spanStyle(_ s: TextStyle, scale: Int) -> String {
-            let key = SpanKey(style: s, scale: scale)
+        /// `tracking`: extra letter spacing in hundredths of a point.
+        mutating func span(_ run: Run, scale: Int = 100, tracking: Int = 0) -> String { "<text:span text:style-name=\"\(spanStyle(run.style, scale: scale, tracking: tracking))\">\(DocumentText.escapeXML(run.text))</text:span>" }
+        mutating func spanStyle(_ s: TextStyle, scale: Int, tracking: Int = 0) -> String {
+            let key = SpanKey(style: s, scale: scale, tracking: tracking)
             if let cached = textStyles[key] { return cached }
             let name = "Text\(textStyles.count)"; textStyles[key] = name
             fonts.insert(s.family)
             let font = DocumentText.escapeXML(s.family)
-            styles += "<style:style style:name=\"\(name)\" style:family=\"text\"><style:text-properties style:font-name=\"\(font)\" style:font-name-asian=\"\(font)\" style:font-name-complex=\"\(font)\" fo:font-family=\"\(font)\" fo:font-size=\"\(PDFDocumentReconstruction.wordSize(s.size))pt\" fo:font-weight=\"\(s.bold ? "bold" : "normal")\" fo:font-style=\"\(s.italic ? "italic" : "normal")\" fo:color=\"\(s.color)\"\(scale < 100 ? " style:text-scale=\"\(scale)%\"" : "")\(s.underline ? " style:text-underline-style=\"solid\" style:text-underline-width=\"auto\"" : "")/></style:style>"
+            styles += "<style:style style:name=\"\(name)\" style:family=\"text\"><style:text-properties style:font-name=\"\(font)\" style:font-name-asian=\"\(font)\" style:font-name-complex=\"\(font)\" fo:font-family=\"\(font)\" fo:font-size=\"\(PDFDocumentReconstruction.wordSize(s.size))pt\" fo:font-weight=\"\(s.bold ? "bold" : "normal")\" fo:font-style=\"\(s.italic ? "italic" : "normal")\" fo:color=\"\(s.color)\"\(scale < 100 ? " style:text-scale=\"\(scale)%\"" : "")\(tracking != 0 ? " fo:letter-spacing=\"\(Double(tracking) / 100)pt\"" : "")\(s.underline ? " style:text-underline-style=\"solid\" style:text-underline-width=\"auto\"" : "")/></style:style>"
             return name
         }
         mutating func paragraphStyle(left: CGFloat, right: CGFloat = 0, before: CGFloat, lineHeight: CGFloat, size: CGFloat, align: String = "start", tabs: [(CGFloat, String)] = []) -> String {
@@ -170,6 +171,21 @@ enum PDFDocumentReconstruction {
                 guard index < rows.count - 1 || rows.count == 1 || align != "justify" else { return 100 }
                 return condensing(row)
             }.min() ?? 100
+            // Letter-spaced (tracked) text: lines wider than their glyphs need,
+            // evenly per character. Justified lines are stretched by their
+            // alignment instead, so only a justified paragraph's last line counts.
+            let tracking: Int = {
+                guard scale == 100 else { return 0 }
+                let measured = (align == "justify" ? [rows[rows.count - 1]] : rows).compactMap { row -> CGFloat? in
+                    let runs = row.cells.flatMap(\.runs)
+                    let characters = runs.map(\.text.count).reduce(0, +)
+                    guard row.cells.count == 1, characters > 8 else { return nil }
+                    let natural = runs.map { PDFDocumentReconstruction.width(of: $0.text, style: $0.style) }.reduce(0, +)
+                    return (row.cells[0].bounds.width - natural) / CGFloat(characters - 1)
+                }
+                guard let least = measured.min(), least > 0.25 else { return 0 }
+                return Int((least * 100).rounded(.down))
+            }()
             // Cells on one line (label … value) sit on tab stops at their source positions.
             var tabs: [(CGFloat, String)] = []
             if rows.count == 1, first.cells.count > 1 {
@@ -189,17 +205,25 @@ enum PDFDocumentReconstruction {
             let ended = rows.indices.dropFirst().map { rows[$0 - 1].bounds.maxX + firstWord(rows[$0]) < blockRight - 1 }
             let room = rows.indices.dropFirst().filter { !ended[$0 - 1] }.map { firstWord(rows[$0]) - (blockRight - rows[$0 - 1].bounds.maxX) - 0.5 }.min() ?? 0
             let wraps = ended.contains(false)
-            let rightIndent = keepLines || rows.count == 1 || !wraps ? 0 : max(0, contentRight - blockRight - 1 - max(0, min(room, (blockRight - rect.minX) * 0.03)))
+            var rightIndent = keepLines || rows.count == 1 || !wraps ? 0 : max(0, contentRight - blockRight - 1 - max(0, min(room, (blockRight - rect.minX) * 0.03)))
+            // Centred lines keep their breaks and their own column (a little
+            // wider than the widest line), so the centre stays where it was.
+            let centred = align == "center" && rows.count > 1
+            if centred { left = max(0, rect.minX - contentLeft - 2); rightIndent = max(0, contentRight - rect.maxX - 2) }
+            // Justified lines keep their breaks and are stretched to the right
+            // indent, so it sits at the source's right edge, with 2pt for a
+            // renderer's wider metrics (a forced break cannot pull a word up).
+            if align == "justify" && !keepLines { rightIndent = max(0, contentRight - blockRight - 2) }
             let style = paragraphStyle(left: left, right: rightIndent, before: gap, lineHeight: lineHeight, size: first.fontSize, align: align, tabs: tabs)
             var content = ""
             for (line, row) in rows.enumerated() {
                 // Justified paragraphs keep each source line (Word stretches a
                 // line ending in a soft break), so the line count cannot change
                 // with a renderer's own spacing. Ragged text flows normally.
-                if line > 0 { content += align == "justify" || keepLines || ended[line - 1] ? " <text:line-break/>" : " " }
+                if line > 0 { content += align == "justify" || keepLines || centred || ended[line - 1] ? " <text:line-break/>" : " " }
                 for (column, cell) in row.cells.enumerated() {
                     if column > 0 { content += "<text:tab/>" }
-                    for run in cell.runs { content += span(run, scale: scale) }
+                    for run in cell.runs { content += span(run, scale: scale, tracking: tracking) }
                 }
             }
             return "<text:p text:style-name=\"\(style)\">\(content)</text:p>"
@@ -313,16 +337,18 @@ enum PDFDocumentReconstruction {
                 contents += "<table:table-row table:style-name=\"\(rowStyle)\">"
                 for (column, cell) in row.cells.enumerated() {
                     let fill = grid.fills[index][column]
-                    let padding = max(1, min(12, cell.bounds.minX - xs[column]))
-                    let key = "\(fill ?? "")|\(Int(padding * 4))"
+                    let start = xs[column], end = xs[column + 1]
+                    let padding = max(1, min(12, cell.bounds.minX - start))
+                    let align = end - cell.bounds.maxX < padding + 3 && cell.bounds.minX - start > padding + 6 ? "end" : abs(cell.bounds.midX - (start + end) / 2) < 3 && cell.bounds.minX - start > padding + 4 ? "center" : "start"
+                    // A right-aligned value keeps its own gap to the right rule.
+                    let (padLeft, padRight) = align == "end" ? (CGFloat(1), max(1, min(12, end - cell.bounds.maxX))) : (padding, padding)
+                    let key = "\(fill ?? "")|\(Int(padLeft * 4))|\(Int(padRight * 4))"
                     let cellStyle: String
                     if let cached = cellStyles[key] { cellStyle = cached } else {
                         cellStyle = "\(name)Cell\(cellStyles.count)"; cellStyles[key] = cellStyle
                         let borders = grid.vertical ? "fo:border=\"\(rule)\"" : "fo:border-top=\"\(rule)\" fo:border-bottom=\"\(rule)\" fo:border-left=\"none\" fo:border-right=\"none\""
-                        styles += "<style:style style:name=\"\(cellStyle)\" style:family=\"table-cell\"><style:table-cell-properties \(borders) fo:padding-left=\"\(padding)pt\" fo:padding-right=\"\(padding)pt\" fo:padding-top=\"0pt\" fo:padding-bottom=\"0pt\" style:vertical-align=\"middle\"\(fill.map { " fo:background-color=\"\($0)\"" } ?? "")/></style:style>"
+                        styles += "<style:style style:name=\"\(cellStyle)\" style:family=\"table-cell\"><style:table-cell-properties \(borders) fo:padding-left=\"\(padLeft)pt\" fo:padding-right=\"\(padRight)pt\" fo:padding-top=\"0pt\" fo:padding-bottom=\"0pt\" style:vertical-align=\"middle\"\(fill.map { " fo:background-color=\"\($0)\"" } ?? "")/></style:style>"
                     }
-                    let start = xs[column], end = xs[column + 1]
-                    let align = end - cell.bounds.maxX < padding + 3 && cell.bounds.minX - start > padding + 6 ? "end" : abs(cell.bounds.midX - (start + end) / 2) < 3 && cell.bounds.minX - start > padding + 4 ? "center" : "start"
                     let paragraph = paragraphStyle(left: 0, before: 0, lineHeight: max(cell.fontSize * 1.2, cell.bounds.height), size: cell.fontSize, align: align)
                     var value = ""
                     for run in cell.runs { value += span(run) }
@@ -444,8 +470,8 @@ enum PDFDocumentReconstruction {
             if hasFooter { layout += "<style:footer-style><style:header-footer-properties fo:min-height=\"\(bodyBottom - bottom)pt\" fo:margin-top=\"0pt\" fo:margin-left=\"0pt\" fo:margin-right=\"0pt\" style:dynamic-spacing=\"false\"/></style:footer-style>" }
             pageLayouts += layout + "</style:page-layout>"
             var master = "<style:master-page style:name=\"\(masterName)\" style:page-layout-name=\"Layout\(masterName)\">"
-            let headerArt = hasHeader ? art?.band(0, bodyTop).map { "<text:p text:style-name=\"ArtworkAnchor\">" + frame("Header artwork", $0, y: 0, height: bodyTop) + "</text:p>" } ?? "" : ""
-            let footerArt = hasFooter ? art?.band(pageSize.height - bodyBottom, pageSize.height).map { "<text:p text:style-name=\"ArtworkAnchor\">" + frame("Footer artwork", $0, y: pageSize.height - bodyBottom, height: bodyBottom) + "</text:p>" } ?? "" : ""
+            let headerArt = hasHeader ? art?.band(0, bodyTop, always: art?.paper != nil).map { "<text:p text:style-name=\"ArtworkAnchor\">" + frame("Header artwork", $0, y: 0, height: bodyTop) + "</text:p>" } ?? "" : ""
+            let footerArt = hasFooter ? art?.band(pageSize.height - bodyBottom, pageSize.height, always: art?.paper != nil).map { "<text:p text:style-name=\"ArtworkAnchor\">" + frame("Footer artwork", $0, y: pageSize.height - bodyBottom, height: bodyBottom) + "</text:p>" } ?? "" : ""
             // Header and footer lines keep their spacing from the area's top.
             func lines(_ rows: [(row: Row, tokens: [Furniture.Token])], from start: CGFloat) -> String {
                 var previous = start, xml = ""
@@ -467,7 +493,7 @@ enum PDFDocumentReconstruction {
             // break; anchored in the breaking paragraph, Word would place it
             // on the previous page.
             var start = "<text:p text:style-name=\"PageStart\(index)\"/><text:p text:style-name=\"ArtworkAnchor\">"
-            if let band = art?.band(bodyArtTop, bodyArtBottom) { start += frame("Page \(index + 1) artwork", band, y: bodyArtTop, height: bodyArtBottom - bodyArtTop) }
+            if let band = art?.band(bodyArtTop, bodyArtBottom, always: art?.paper != nil) { start += frame("Page \(index + 1) artwork", band, y: bodyArtTop, height: bodyArtBottom - bodyArtTop) }
             for (number, picture) in (art?.pictures ?? []).enumerated() {
                 let representation = NSBitmapImageRep(cgImage: picture.image)
                 let jpeg = picture.image.width * picture.image.height > 250_000
@@ -1221,9 +1247,12 @@ enum PDFDocumentReconstruction {
         var pictures: [(rect: CGRect, image: CGImage)] = []
         var boxes: [Box] = []
         /// A horizontal band of the page, `top`/`bottom` measured in points from the page top.
-        func band(_ top: CGFloat, _ bottom: CGFloat) -> (data: Data, jpeg: Bool)? {
+        /// A horizontal slice of the artwork; an empty slice is skipped unless
+        /// `always` (a coloured page, whose colour Word does not keep as a page
+        /// background everywhere).
+        func band(_ top: CGFloat, _ bottom: CGFloat, always: Bool = false) -> (data: Data, jpeg: Bool)? {
             let y0 = max(0, Int((top * scale).rounded(.down))), y1 = min(image.height, Int((bottom * scale).rounded(.up)))
-            guard y1 - y0 > 2, ink[y0..<y1].reduce(0, +) * 2000 > (y1 - y0) * image.width / 7,
+            guard y1 - y0 > 2, always || ink[y0..<y1].reduce(0, +) * 2000 > (y1 - y0) * image.width / 7,
                   let crop = image.cropping(to: CGRect(x: 0, y: y0, width: image.width, height: y1 - y0)) else { return nil }
             let representation = NSBitmapImageRep(cgImage: crop)
             if photographic, let jpeg = representation.representation(using: .jpeg, properties: [.compressionFactor: 0.82]) { return (jpeg, true) }

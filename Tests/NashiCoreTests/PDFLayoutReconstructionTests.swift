@@ -229,4 +229,25 @@ final class PDFLayoutReconstructionTests: XCTestCase {
         let fixed = WordCompatibility.transitional(strict)
         XCTAssertEqual(fixed, "<w:tcMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tcMar><w:ind w:hanging=\"0\" w:left=\"200\" w:right=\"0\"/><w:jc w:val=\"right\"/><w:jc w:val=\"left\"/>")
     }
+
+    func testLetterSpacedTextKeepsItsTracking() throws {
+        let document = try pdf("Tracking", pages: 1) { _ in
+            let font = NSFont(name: "Georgia", size: 12) ?? .systemFont(ofSize: 12)
+            NSAttributedString(string: "Geniş aralıklı başlık metni burada", attributes: [.font: font, .kern: 2.0]).draw(at: CGPoint(x: 60, y: 100))
+            NSAttributedString(string: "Normal aralıklı ikinci satır metni", attributes: [.font: font]).draw(at: CGPoint(x: 60, y: 160))
+        }
+        let xml = try reconstruct(document)
+        let spacing = try XCTUnwrap(xml.range(of: "fo:letter-spacing=\"([0-9.]+)pt\"", options: .regularExpression).map { String(xml[$0]) })
+        let value = try XCTUnwrap(Double(spacing.split(separator: "\"")[1].dropLast(2)))
+        XCTAssertEqual(value, 2.0, accuracy: 0.35, "The tracking is measured from the line's width")
+        XCTAssertEqual(xml.components(separatedBy: "fo:letter-spacing").count - 1, 1, "Only the tracked line is letter-spaced")
+        XCTAssertTrue(xml.contains("Georgia"))
+    }
+
+    func testFontSizesRoundDownToWordHalfPoints() {
+        XCTAssertEqual(PDFDocumentReconstruction.wordSize(8.75), 8.5)
+        XCTAssertEqual(PDFDocumentReconstruction.wordSize(9), 9)
+        XCTAssertEqual(PDFDocumentReconstruction.wordSize(10.98), 11)
+        XCTAssertEqual(PDFDocumentReconstruction.wordSize(11.4), 11)
+    }
 }

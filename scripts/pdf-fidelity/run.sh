@@ -15,13 +15,17 @@ done
 swift build --product nashi-cli >/dev/null
 cli="$(swift build --show-bin-path)/nashi-cli"
 soffice=$("$cli" dependencies | python3 -c 'import json,sys;print(json.load(sys.stdin)["soffice"])')
+# Same font folders the app gives LibreOffice, so the round trip renders with
+# the document's real fonts instead of bundled look-alikes.
+fontconf="$work/fonts.conf"
+print -r -- "<?xml version=\"1.0\"?><fontconfig><dir>/System/Library/Fonts</dir><dir>/System/Library/Fonts/Supplemental</dir><dir>/Library/Fonts</dir><dir>$HOME/Library/Fonts</dir><dir>${soffice:h:h}/Resources/fonts</dir><cachedir>$HOME/Library/Caches/com.unqsoft.uforge/fontconfig</cachedir></fontconfig>" > "$fontconf"
 for pdf in "$fixtures"/*.pdf; do
   name=${pdf:t:r}
   # Each run converts into its own folder so the newest DOCX is unambiguous.
   run_dir="$docx/$(date +%s)-$name";mkdir -p "$run_dir"
   "$cli" convert docx "$pdf" --options "{\"outputDirectory\":\"$run_dir\"}" >/dev/null
   cp "$(ls -t "$run_dir"/*.docx | /usr/bin/head -n 1)" "$docx/$name.docx"
-  "$soffice" --headless --norestore --convert-to pdf --outdir "$roundtrip" "$docx/$name.docx" >/dev/null 2>&1
+  FONTCONFIG_FILE="$fontconf" "$soffice" --headless --norestore --convert-to pdf --outdir "$roundtrip" "$docx/$name.docx" >/dev/null 2>&1
   "$tools/compare" "$pdf" "$roundtrip/$name.pdf" "$report"
   "$tools/drift" "$pdf" "$roundtrip/$name.pdf" > "$report/$name-drift.txt" || true
 done

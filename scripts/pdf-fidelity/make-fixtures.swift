@@ -403,12 +403,46 @@ let lorem=["Bu rapor, 2026 yılının üçüncü çeyreğine ait operasyonel son
     w.footer();w.endPage();w.close()
 }
 
+/// Typography: one font family per page (serif, sans, monospace), bold,
+/// italic, bold italic and coloured runs, five sizes, growing line spacing,
+/// left / justified / centred text and one letter-spaced paragraph.
+@MainActor func typography(_ url:URL) {
+    let families=["Times New Roman","Georgia","Courier New","Verdana","Trebuchet MS","Arial","Helvetica Neue","Palatino"]
+    let words="Bu belge yazı tipi, kalınlık, eğiklik ve boşluk doğruluğunu ölçmek için hazırlanmış genel bir deneme metnidir; çeşitli satır aralıkları, paragraf boşlukları ve hizalamalar içerir. Sözleşme 2026/118 sayılı karar uyarınca 15.04.2026 tarihinde yürürlüğe girmiştir."
+    func font(_ family:String,_ size:CGFloat,bold:Bool=false,italic:Bool=false)->NSFont {
+        var traits:NSFontTraitMask=[]; if bold { traits.insert(.boldFontMask) }; if italic { traits.insert(.italicFontMask) }
+        return NSFontManager.shared.font(withFamily:family,traits:traits,weight:5,size:size) ?? bodyFont(bold:bold,size:size)
+    }
+    let doc=PDFWriter(url:url,pages:families.count)
+    for (index,family) in families.enumerated() {
+        doc.beginPage()
+        let alternate=families[(index+3)%families.count]
+        var y:CGFloat=60
+        NSAttributedString(string:"Bölüm \(index+1): \(family)",attributes:[.font:font(family,20,bold:true)]).draw(at:CGPoint(x:60,y:y)); y+=40
+        for (step,size) in [9.5,10,11,12,13.5].enumerated() {
+            let style=NSMutableParagraphStyle(); style.lineSpacing=CGFloat(step)*1.5; style.alignment = step==2 ? .justified : (step==4 ? .center : .left)
+            let text=NSMutableAttributedString(string:words,attributes:[.font:font(step%2==0 ? family:alternate,CGFloat(size)),.paragraphStyle:style,.foregroundColor:ink])
+            text.addAttributes([.font:font(family,CGFloat(size),bold:true)],range:NSRange(location:0,length:8))
+            text.addAttributes([.font:font(family,CGFloat(size),italic:true)],range:NSRange(location:40,length:18))
+            text.addAttributes([.font:font(family,CGFloat(size),bold:true,italic:true),.foregroundColor:stampRed],range:NSRange(location:120,length:22))
+            if step==3 { text.addAttribute(.kern,value:1.2,range:NSRange(location:0,length:text.length)) }
+            let origin=CGPoint(x:60+CGFloat(step%2)*20,y:y), width=455-CGFloat(step%2)*20
+            let height=text.boundingRect(with:CGSize(width:width,height:400),options:[.usesLineFragmentOrigin]).height
+            text.draw(with:CGRect(origin:origin,size:CGSize(width:width,height:height+2)),options:[.usesLineFragmentOrigin])
+            y+=height+10+CGFloat(step)*4
+        }
+        NSAttributedString(string:"Sayfa \(index+1) / \(families.count)",attributes:[.font:font("Arial",8)]).draw(at:CGPoint(x:500,y:800))
+        doc.endPage()
+    }
+    doc.close()
+}
+
 @main struct MakeFixtures {
     @MainActor static func main() {
         let out=URL(fileURLWithPath:CommandLine.arguments.count>1 ? CommandLine.arguments[1]:"fixtures",isDirectory:true)
         try? FileManager.default.createDirectory(at:out,withIntermediateDirectories:true)
-        let names=["01-rapor.pdf","02-sozlesme.pdf","03-fatura.pdf","04-taranmis.pdf","05-karma.pdf","06-dekont.pdf"].map{out.appendingPathComponent($0)}
-        report(names[0]);contract(names[1]);invoice(names[2]);receipt(names[5])
+        let names=["01-rapor.pdf","02-sozlesme.pdf","03-fatura.pdf","04-taranmis.pdf","05-karma.pdf","06-dekont.pdf","07-yazi-tipleri.pdf"].map{out.appendingPathComponent($0)}
+        report(names[0]);contract(names[1]);invoice(names[2]);receipt(names[5]);typography(names[6])
         scanned(from:[names[1],names[2]],pages:[(0,1),(1,0)],to:names[3])
         mixed(names[4],scanSource:names[0])
         for url in names { print(url.path,PDFDocument(url:url)?.pageCount ?? 0) }

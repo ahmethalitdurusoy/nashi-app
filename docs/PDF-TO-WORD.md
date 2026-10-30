@@ -8,7 +8,7 @@ PDF.
 
 | In the PDF | In Word |
 | --- | --- |
-| Text | Editable paragraphs with the source font, size, weight, slant, colour and alignment. Justified paragraphs keep their source line breaks so line counts never change. |
+| Text | Editable paragraphs with the source font, size, weight, slant, colour, letter spacing and alignment. Justified and centred paragraphs keep their source line breaks and their own column, so line counts never change. |
 | Headings, bullet and numbered lines | Separate paragraphs (never merged into the text around them). |
 | Lines repeated at the top/bottom of most pages | The Word header and footer. Page numbers become `PAGE` / `NUMPAGES` fields; header/footer graphics (logo, rules) sit behind them in the header/footer. |
 | Aligned rows of cells | Word tables. Ruled tables get real Word borders, column widths and row heights read from the rules, and cell shading. |
@@ -40,6 +40,12 @@ Font sizes are rounded down to Word's half-point steps (8.75pt → 8.5pt, not
 gaps before tables are paragraph space-before, which Google Docs keeps (it
 drops exact line heights on empty lines).
 
+LibreOffice runs headless with fontconfig, which on its own sees only the
+fonts bundled with LibreOffice. UForge points it at the macOS font folders
+too, so every conversion through LibreOffice (PDF → Word, Word → PDF, …) uses
+the document's real fonts — Georgia, Verdana, Calibri, Palatino — instead of
+look-alikes with other widths. The fidelity runner does the same.
+
 LibreOffice writes DOCX with the strict OOXML side names (`w:start`/`w:end`);
 UForge rewrites them to `left`/`right`, which Google Docs and older Word
 versions need to keep cell margins, indents and right-aligned amounts.
@@ -50,7 +56,9 @@ no page-anchored background); light text is then darkened to stay readable.
 ## Checking fidelity
 
 `scripts/pdf-fidelity/run.sh` generates a corpus — report, contract, invoice,
-bank receipt, scanned and mixed documents covering every case above, with
+bank receipt, scanned and mixed documents and an eight-family typography
+sample (serif, sans, monospace; bold, italic, colour, five sizes, line
+spacing, justified, centred and letter-spaced text) covering every case above, with
 fictitious data — converts each to DOCX
 with UForge's engine, re-exports the DOCX to PDF and writes, per page:
 

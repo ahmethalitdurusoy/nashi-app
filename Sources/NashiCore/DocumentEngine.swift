@@ -156,6 +156,15 @@ public enum DocumentEngine {
         """
         try config.write(to: profileUser.appendingPathComponent("registrymodifications.xcu"), atomically: true, encoding: .utf8)
         let executable = try Dependencies.executable("soffice")
+        // Headless LibreOffice finds fonts through fontconfig, which by default
+        // sees only its own bundled fonts: Georgia, Verdana, Calibri and the
+        // rest would be swapped for look-alikes with other widths. Point it at
+        // the macOS font folders as well.
+        let bundled = executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/fonts", isDirectory: true)
+        let fontFolders = ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts", fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Fonts").path, bundled.path]
+        let fontConfig = profile.appendingPathComponent("fonts.conf")
+        try ("<?xml version=\"1.0\"?><!DOCTYPE fontconfig SYSTEM \"fonts.dtd\"><fontconfig>" + fontFolders.map { "<dir>\(DocumentText.escapeXML($0))</dir>" }.joined() + "<cachedir>\(DocumentText.escapeXML(FontCache.directory.path))</cachedir></fontconfig>").write(to: fontConfig, atomically: true, encoding: .utf8)
+        let environment = ["SAL_DISABLE_OPENCL": "1", "LC_ALL": "en_US.UTF-8", "FONTCONFIG_FILE": fontConfig.path]
         var arguments = ["-env:UserInstallation=\(profile.absoluteString)", "--headless", "--nologo", "--nodefault", "--nolockcheck", "--nofirststartwizard", "--norestore"]
         let sourceFormat = normalized(input.pathExtension)
         var source = input
@@ -179,9 +188,9 @@ public enum DocumentEngine {
         let result: ProcessResult
         let sandbox = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
         if fm.isExecutableFile(atPath: sandbox.path) {
-            result = try ProcessRunner.run(sandbox, ["-p", "(version 1)(allow default)(deny network* (remote ip))", executable.path] + arguments, token: token, environment: ["SAL_DISABLE_OPENCL": "1", "LC_ALL": "en_US.UTF-8"])
+            result = try ProcessRunner.run(sandbox, ["-p", "(version 1)(allow default)(deny network* (remote ip))", executable.path] + arguments, token: token, environment: environment)
         } else {
-            result = try ProcessRunner.run(executable, arguments, token: token, environment: ["SAL_DISABLE_OPENCL": "1", "LC_ALL": "en_US.UTF-8"])
+            result = try ProcessRunner.run(executable, arguments, token: token, environment: environment)
         }
         let output = directory.appendingPathComponent(input.deletingPathExtension().lastPathComponent).appendingPathExtension(format)
         guard fm.fileExists(atPath: output.path) else {
@@ -369,5 +378,14 @@ enum TextClippingCodec {
     private static func save(_ data: Data, extension ext: String, in work: URL) throws -> URL {
         let output = work.appendingPathComponent("Text clipping").appendingPathExtension(ext)
         try data.write(to: output); return output
+    }
+}
+
+/// Where fontconfig keeps its font cache between conversions (building it
+/// for every system font takes seconds; reusing it is instant).
+enum FontCache {
+    static var directory: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("com.unqsoft.uforge/fontconfig", isDirectory: true)
     }
 }
