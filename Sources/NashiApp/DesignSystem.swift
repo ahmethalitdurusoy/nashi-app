@@ -9,17 +9,17 @@ enum NashiPalette {
             return NSColor(srgbRed:rgb.0,green:rgb.1,blue:rgb.2,alpha:1)
         }
     }
-    static let canvas=Color(nsColor:adaptive((0.976,0.965,0.930),(0.065,0.100,0.079)))
-    static let surface=Color(nsColor:adaptive((1,0.993,0.967),(0.110,0.155,0.122)))
-    static let inset=Color(nsColor:adaptive((0.945,0.930,0.880),(0.082,0.121,0.094)))
-    static let forest=Color(nsColor:adaptive((0.19,0.33,0.23),(0.70,0.82,0.62)))
+    static let canvas=Color(nsColor:adaptive((0.965,0.962,0.955),(0.072,0.077,0.092)))
+    static let surface=Color(nsColor:adaptive((1,0.998,0.992),(0.118,0.124,0.143)))
+    static let inset=Color(nsColor:adaptive((0.928,0.925,0.915),(0.092,0.097,0.113)))
+    static let forest=Color(nsColor:adaptive((0.17,0.18,0.23),(0.93,0.81,0.55)))
     static let sand=Color(nsColor:adaptive((0.965,0.906,0.746),(0.235,0.205,0.130)))
-    static let sage=Color(nsColor:adaptive((0.877,0.921,0.824),(0.140,0.221,0.156)))
+    static let sage=Color(nsColor:adaptive((0.895,0.900,0.918),(0.158,0.166,0.193)))
     static let border=Color.primary.opacity(0.075)
     static let gold=NashiArtwork.gold
     static let ink=NashiArtwork.ink
     static let goldInk=Color(nsColor:adaptive((0.44,0.31,0.09),(0.91,0.77,0.46)))
-    static let buttonInk=Color(red:0.17,green:0.21,blue:0.11)
+    static let buttonInk=Color(red:0.13,green:0.13,blue:0.16)
     static let goldEnd=Color(red:0.96,green:0.82,blue:0.49)
 }
 extension Color { static let nashi=Color(nsColor:NashiPalette.gold) }
