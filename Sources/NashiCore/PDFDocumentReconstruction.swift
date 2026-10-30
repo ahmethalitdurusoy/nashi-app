@@ -29,6 +29,11 @@ enum PDFDocumentReconstruction {
         return output
     }
 
+    /// Word stores font sizes in half points and rounds to the nearest one:
+    /// 8.75pt would become 9pt and push a full line onto two. Rounding down
+    /// (allowing for float noise) keeps every line within its source width.
+    static func wordSize(_ size: Double) -> Double { max(1, ((size * 2) + 0.1).rounded(.down) / 2) }
+
     private struct TextStyle: Hashable {
         var family = "Arial"
         var size: Double = 12
@@ -123,7 +128,7 @@ enum PDFDocumentReconstruction {
             let name = "Text\(textStyles.count)"; textStyles[key] = name
             fonts.insert(s.family)
             let font = DocumentText.escapeXML(s.family)
-            styles += "<style:style style:name=\"\(name)\" style:family=\"text\"><style:text-properties style:font-name=\"\(font)\" style:font-name-asian=\"\(font)\" style:font-name-complex=\"\(font)\" fo:font-family=\"\(font)\" fo:font-size=\"\(s.size)pt\" fo:font-weight=\"\(s.bold ? "bold" : "normal")\" fo:font-style=\"\(s.italic ? "italic" : "normal")\" fo:color=\"\(s.color)\"\(scale < 100 ? " style:text-scale=\"\(scale)%\"" : "")\(s.underline ? " style:text-underline-style=\"solid\" style:text-underline-width=\"auto\"" : "")/></style:style>"
+            styles += "<style:style style:name=\"\(name)\" style:family=\"text\"><style:text-properties style:font-name=\"\(font)\" style:font-name-asian=\"\(font)\" style:font-name-complex=\"\(font)\" fo:font-family=\"\(font)\" fo:font-size=\"\(PDFDocumentReconstruction.wordSize(s.size))pt\" fo:font-weight=\"\(s.bold ? "bold" : "normal")\" fo:font-style=\"\(s.italic ? "italic" : "normal")\" fo:color=\"\(s.color)\"\(scale < 100 ? " style:text-scale=\"\(scale)%\"" : "")\(s.underline ? " style:text-underline-style=\"solid\" style:text-underline-width=\"auto\"" : "")/></style:style>"
             return name
         }
         mutating func paragraphStyle(left: CGFloat, right: CGFloat = 0, before: CGFloat, lineHeight: CGFloat, size: CGFloat, align: String = "start", tabs: [(CGFloat, String)] = []) -> String {
@@ -131,6 +136,12 @@ enum PDFDocumentReconstruction {
             let stops = tabs.isEmpty ? "" : "<style:tab-stops>" + tabs.map { "<style:tab-stop style:position=\"\(max(0, $0.0))pt\" style:type=\"\($0.1)\"/>" }.joined() + "</style:tab-stops>"
             styles += "<style:style style:name=\"\(name)\" style:family=\"paragraph\"><style:paragraph-properties fo:margin-left=\"\(max(0, left))pt\" fo:margin-right=\"\(max(0, right))pt\" fo:text-indent=\"0pt\" fo:margin-top=\"\(max(0, before))pt\" fo:margin-bottom=\"0pt\" fo:line-height=\"\(max(1, lineHeight))pt\" fo:text-align=\"\(align)\" fo:hyphenation-ladder-count=\"no-limit\">\(stops)</style:paragraph-properties><style:text-properties fo:font-size=\"\(max(1, size))pt\" fo:hyphenate=\"false\"/></style:style>"
             return name
+        }
+        /// An empty line that opens a vertical gap (Word tables have no space
+        /// before). The gap is space-before on a 1pt line: Google Docs ignores
+        /// exact line heights on empty paragraphs but keeps paragraph spacing.
+        mutating func spacer(_ gap: CGFloat) -> String {
+            gap > 0.5 ? "<text:p text:style-name=\"\(paragraphStyle(left: 0, before: gap - 1, lineHeight: 1, size: 1))\"/>" : ""
         }
         mutating func paragraph(_ rows: [Row], page: CGRect, margin: CGFloat, gap: CGFloat, lineHeight: CGFloat) -> String {
             guard let first = rows.first else { return "" }
@@ -603,10 +614,15 @@ enum PDFDocumentReconstruction {
                 edges = (0..<(spans.count - 1)).map { (spans[$0].maxX + spans[$0 + 1].minX) / 2 }
             } else { placement = Array(repeating: nil, count: rowsContent.count) }
         }
-        let bounds = [rect.minX] + edges + [rect.maxX]
-        let count = bounds.count - 1
+        // Bands set inside the frame (a white margin between frame and band)
+        // keep that margin as an unshaded column on each side.
+        let insets = shape.panels.flatMap { [$0.rect.minX - rect.minX, rect.maxX - $0.rect.maxX] }
+        let inset = shape.border != nil && !insets.isEmpty ? max(0, insets.min()!) : 0
+        let gutter = inset >= 1.5 && inset < 20 && rowsContent.allSatisfy { row in row.blocks.allSatisfy { $0.bounds.minX >= rect.minX + inset - 0.5 && $0.bounds.maxX <= rect.maxX - inset + 0.5 } }
+        let bounds = gutter ? [rect.minX, rect.minX + inset] + edges + [rect.maxX - inset, rect.maxX] : [rect.minX] + edges + [rect.maxX]
+        let count = bounds.count - 1, first = gutter ? 1 : 0, last = gutter ? count - 2 : count - 1
         var xml = ""
-        if previousBottom - rect.maxY > 0.5 { xml += "<text:p text:style-name=\"\(writer.paragraphStyle(left: 0, before: 0, lineHeight: previousBottom - rect.maxY, size: 1))\"/>" }
+        xml += writer.spacer(previousBottom - rect.maxY)
         let name = "Box\(writer.tableIndex)"; writer.tableIndex += 1
         writer.styles += "<style:style style:name=\"\(name)\" style:family=\"table\"><style:table-properties table:align=\"left\" style:width=\"\(rect.width)pt\" fo:margin-left=\"\(max(0, rect.minX - left))pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/></style:style>"
         var columns = ""
@@ -633,7 +649,10 @@ enum PDFDocumentReconstruction {
             // A separator rule at this row's lower edge becomes its bottom border.
             let divider = shape.dividers.first { abs($0.y - row.bottom) < 1.5 }.map { "\(String(format: "%.2f", $0.weight))pt solid \($0.color)" }
             let rowStyle = "\(name)Row\(index)"
-            writer.styles += "<style:style style:name=\"\(rowStyle)\" style:family=\"table-row\"><style:table-row-properties style:min-row-height=\"\(max(1, row.top - row.bottom))pt\"/></style:style>"
+            // Borders add to a row's height in Word: the frame's rules and a
+            // divider are taken out of the row they sit on.
+            let borders = 0.75 * ((isTop && shape.border != nil ? shape.stroke : 0) + (isBottom && shape.border != nil ? shape.stroke : 0)) + (divider == nil || isBottom ? 0 : shape.dividers.first { abs($0.y - row.bottom) < 1.5 }!.weight)
+            writer.styles += "<style:style style:name=\"\(rowStyle)\" style:family=\"table-row\"><style:table-row-properties style:min-row-height=\"\(max(1, row.top - row.bottom - borders))pt\"/></style:style>"
             body += "<table:table-row table:style-name=\"\(rowStyle)\">"
             func content(_ region: Region?, _ l: CGFloat, _ r: CGFloat) throws -> String {
                 var cellTop = row.top
@@ -641,16 +660,21 @@ enum PDFDocumentReconstruction {
                 if xml.isEmpty || xml.hasSuffix("</table:table>") { xml += "<text:p text:style-name=\"DocumentEnd\"/>" }
                 return xml
             }
+            let margin = "<table:table-cell table:style-name=\"\(cellStyle(fill: nil, top: isTop, bottom: isBottom, first: true, last: false))\" office:value-type=\"string\"><text:p text:style-name=\"DocumentEnd\"/></table:table-cell>"
+            if gutter { body += margin }
+            let contentLeft = gutter ? bounds[1] : innerLeft, contentRight = gutter ? bounds[count - 1] : innerRight
             if let cells = placement[index] {
-                for column in 0..<count {
-                    let l = column == 0 ? innerLeft : bounds[column], r = column == count - 1 ? innerRight : bounds[column + 1]
-                    body += "<table:table-cell table:style-name=\"\(cellStyle(fill: row.fill, top: isTop, bottom: isBottom, first: column == 0, last: column == count - 1, divider: divider))\" office:value-type=\"string\">\(try content(cells[column], l, r))</table:table-cell>"
+                for column in first...last {
+                    let l = column == first ? contentLeft : bounds[column], r = column == last ? contentRight : bounds[column + 1]
+                    body += "<table:table-cell table:style-name=\"\(cellStyle(fill: row.fill, top: isTop, bottom: isBottom, first: !gutter && column == first, last: !gutter && column == last, divider: divider))\" office:value-type=\"string\">\(try content(cells[column - first], l, r))</table:table-cell>"
                 }
             } else {
-                let span = count > 1 ? " table:number-columns-spanned=\"\(count)\"" : ""
-                body += "<table:table-cell table:style-name=\"\(cellStyle(fill: row.fill, top: isTop, bottom: isBottom, first: true, last: true, divider: divider))\"\(span) office:value-type=\"string\">\(try content(row.region, innerLeft, innerRight))</table:table-cell>"
-                body += String(repeating: "<table:covered-table-cell/>", count: count - 1)
+                let width = last - first + 1
+                let span = width > 1 ? " table:number-columns-spanned=\"\(width)\"" : ""
+                body += "<table:table-cell table:style-name=\"\(cellStyle(fill: row.fill, top: isTop, bottom: isBottom, first: !gutter, last: !gutter, divider: divider))\"\(span) office:value-type=\"string\">\(try content(row.region, contentLeft, contentRight))</table:table-cell>"
+                body += String(repeating: "<table:covered-table-cell/>", count: width - 1)
             }
+            if gutter { body += "<table:table-cell table:style-name=\"\(cellStyle(fill: nil, top: isTop, bottom: isBottom, first: false, last: true))\" office:value-type=\"string\"><text:p text:style-name=\"DocumentEnd\"/></table:table-cell>" }
             body += "</table:table-row>"
         }
         previousBottom = min(previousBottom, rect.minY)
@@ -758,7 +782,7 @@ enum PDFDocumentReconstruction {
                 case .table(let rows):
                     // Word tables have no space-before; a spacer line keeps the gap.
                     let gap = previousBottom - top
-                    if gap > 0.5 { xml += "<text:p text:style-name=\"\(writer.paragraphStyle(left: 0, before: 0, lineHeight: gap, size: 1))\"/>" }
+                    xml += writer.spacer(gap)
                     xml += writer.table(rows, page: frame, margin: margin, gap: 0)
                 case .image(let rect):
                     let png = try PDFOfficeCodec.rasterPNG(page, rect: rect, dpi: options.dpi, token: token)
@@ -776,7 +800,7 @@ enum PDFDocumentReconstruction {
             let extents = region.blocks.map { extent($0, grids: grids) }
             let top = extents.map(\.top).max()!, bottom = extents.map(\.bottom).min()!
             var xml = ""
-            if previousBottom - top > 0.5 { xml += "<text:p text:style-name=\"\(writer.paragraphStyle(left: 0, before: 0, lineHeight: previousBottom - top, size: 1))\"/>" }
+            xml += writer.spacer(previousBottom - top)
             let name = "Layout\(writer.tableIndex)"; writer.tableIndex += 1
             writer.styles += "<style:style style:name=\"\(name)\" style:family=\"table\"><style:table-properties table:align=\"left\" style:width=\"\(right - left)pt\" fo:margin-left=\"0pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/></style:style>"
             writer.styles += "<style:style style:name=\"\(name)Cell\" style:family=\"table-cell\"><style:table-cell-properties fo:border=\"none\" fo:padding=\"0pt\" style:vertical-align=\"top\"/></style:style>"
