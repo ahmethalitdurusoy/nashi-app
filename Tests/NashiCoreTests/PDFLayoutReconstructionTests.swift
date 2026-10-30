@@ -173,11 +173,11 @@ final class PDFLayoutReconstructionTests: XCTestCase {
                 self.text(line, at: CGPoint(x: 422, y: 234 + CGFloat(n) * 10.4), size: 8)
             }
             self.text("İŞLEM TUTARI", at: CGPoint(x: 64, y: 300), size: 8, bold: true)
-            self.text("300,00 TL", at: CGPoint(x: 184, y: 300), size: 8)
+            self.text("150,00 TL", at: CGPoint(x: 184, y: 300), size: 8)
         }
         let body = self.body(try reconstruct(document))
         let text = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-        for value in ["TR12 0006 4000 0011 2345 6789 01", "30.10.2026 14:12:09", "300,00 TL", "ÖRNEK ÜNİVERSİTESİ SPOR BİLİMLERİ FAKÜLTESİ DÖNER SERMAYE İŞLETMESİ"] {
+        for value in ["TR12 0006 4000 0011 2345 6789 01", "30.10.2026 14:12:09", "150,00 TL", "ÖRNEK ÜNİVERSİTESİ SPOR BİLİMLERİ FAKÜLTESİ DÖNER SERMAYE İŞLETMESİ"] {
             XCTAssertTrue(text.contains(value), "\(value) must survive whole and in order")
         }
         // The IBAN's two lines share one table cell, broken where the source broke them.
@@ -202,5 +202,31 @@ final class PDFLayoutReconstructionTests: XCTestCase {
         let xml = try reconstruct(document, artwork: false)
         XCTAssertFalse(xml.contains("Original page artwork"))
         XCTAssertTrue(xml.contains("#202020"), "Without the dark band behind it, white text is darkened to stay readable")
+    }
+
+    func testFramedBoxWithShadedBandsBecomesATableWithCellShading() throws {
+        let document = try pdf("Receipt", pages: 1) { _ in
+            NSColor(white: 0.85, alpha: 1).setStroke()
+            let frame = NSBezierPath(rect: CGRect(x: 50, y: 100, width: 495, height: 120)); frame.lineWidth = 1; frame.stroke()
+            NSColor(srgbRed: 0.99, green: 0.69, blue: 0, alpha: 1).setFill(); CGRect(x: 54, y: 104, width: 487, height: 22).fill()
+            NSColor(white: 0.96, alpha: 1).setFill(); CGRect(x: 54, y: 160, width: 487, height: 26).fill()
+            self.text("BANKA", at: CGPoint(x: 270, y: 108), bold: true)
+            self.text("İŞLEM", at: CGPoint(x: 60, y: 135), bold: true); self.text("Havale", at: CGPoint(x: 200, y: 135))
+            self.text("TUTAR", at: CGPoint(x: 60, y: 166), bold: true); self.text("150,00 TL", at: CGPoint(x: 200, y: 166))
+            self.text("NO", at: CGPoint(x: 60, y: 196), bold: true); self.text("2026000012345678", at: CGPoint(x: 200, y: 196))
+        }
+        let xml = try reconstruct(document)
+        let start = try XCTUnwrap(xml.range(of: "<table:table table:name=\"Box")), end = try XCTUnwrap(xml.range(of: "</table:table>", range: start.upperBound..<xml.endIndex))
+        let table = String(xml[start.lowerBound..<end.upperBound])
+        for value in ["BANKA", "Havale", "150,00 TL", "2026000012345678"] { XCTAssertTrue(table.contains(value), "\(value) sits inside the box table") }
+        XCTAssertTrue(xml.contains("fo:background-color=\"#FCB000\"") || xml.contains("fo:background-color=\"#FDB000\""), "The orange band is a cell fill")
+        XCTAssertTrue(xml.contains("fo:background-color=\"#F5F5F5\""), "The gray band is a cell fill")
+        XCTAssertTrue(xml.contains("fo:border-left=\"") , "The frame is drawn as cell borders")
+    }
+
+    func testWordOutputUsesTransitionalSideNames() {
+        let strict = "<w:tcMar><w:start w:w=\"0\" w:type=\"dxa\"/><w:end w:w=\"0\" w:type=\"dxa\"/></w:tcMar><w:ind w:hanging=\"0\" w:start=\"200\" w:end=\"0\"/><w:jc w:val=\"end\"/><w:jc w:val=\"start\"/>"
+        let fixed = WordCompatibility.transitional(strict)
+        XCTAssertEqual(fixed, "<w:tcMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tcMar><w:ind w:hanging=\"0\" w:left=\"200\" w:right=\"0\"/><w:jc w:val=\"right\"/><w:jc w:val=\"left\"/>")
     }
 }

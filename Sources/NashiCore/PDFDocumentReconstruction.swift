@@ -51,11 +51,11 @@ enum PDFDocumentReconstruction {
         var text: String { cells.map(\.text).joined(separator: " ") }
     }
     private enum Block {
-        case paragraph([Row]), table([Row]), image(CGRect)
+        case paragraph([Row]), table([Row]), image(CGRect), box(Int, CGRect)
         var bounds: CGRect {
             switch self {
             case .paragraph(let rows), .table(let rows): return rows.dropFirst().reduce(rows.first?.bounds ?? .zero) { $0.union($1.bounds) }
-            case .image(let rect): return rect
+            case .image(let rect), .box(_, let rect): return rect
             }
         }
     }
@@ -88,6 +88,16 @@ enum PDFDocumentReconstruction {
         var width: CGFloat
         var fills: [[String?]]
     }
+    /// A boxed panel of the source (a framed section, a shaded band) that is
+    /// rebuilt as a real table: the frame as its border, bands as row fills.
+    private struct Box {
+        var rect: CGRect
+        var border: String?
+        var stroke: CGFloat
+        var panels: [(rect: CGRect, color: String)]
+        /// Full-width separator rules inside the box (page y, colour, weight).
+        var dividers: [(y: CGFloat, color: String, weight: CGFloat)] = []
+    }
     private static func tableKey(_ rows: [Row]) -> String { "\(Int(rows[0].bounds.minX))x\(Int(rows[0].bounds.midY))x\(rows.count)" }
 
     private struct Writer {
@@ -104,6 +114,8 @@ enum PDFDocumentReconstruction {
         var keepLines = false
         /// Ruled tables recognised in the artwork, by `tableKey`.
         var grids: [String: Grid] = [:]
+        /// Boxes on the current page and the blocks inside each.
+        var boxes: [(box: Box, blocks: [Block])] = []
         mutating func span(_ run: Run, scale: Int = 100) -> String { "<text:span text:style-name=\"\(spanStyle(run.style, scale: scale))\">\(DocumentText.escapeXML(run.text))</text:span>" }
         mutating func spanStyle(_ s: TextStyle, scale: Int) -> String {
             let key = SpanKey(style: s, scale: scale)
@@ -370,7 +382,27 @@ enum PDFDocumentReconstruction {
             // artwork (so text recognised inside them is already lifted out).
             let pictures = text.scanned || !withArtwork ? [] : try PDFPlacedImages.regions(page, token: token).filter { $0.width * $0.height >= 300 && $0.width * $0.height < box.width * box.height * 0.85 }
             let tables = blocks.compactMap { block -> [Row]? in if case .table(let rows) = block { return rows }; return nil }
-            let art = withArtwork ? try artwork(page, ink: text.ink, tables: tables, pictures: pictures, photographic: text.photographic, token: token) : nil
+            // Every placed image, however large or clipped, keeps boxes off it.
+            // Boxes (like page furniture) are only looked for on document-sized
+            // pages, and never on scans, whose noise makes bands unreliable.
+            let placedAll = text.scanned || !withArtwork ? [] : try PDFPlacedImages.regions(page, token: token)
+            let art = withArtwork ? try artwork(page, ink: text.ink, tables: tables, pictures: pictures, placed: placedAll, contents: text.scanned || box.height < 300 ? [] : blocks.map(\.bounds), photographic: text.photographic, token: token) : nil
+            // Blocks inside a recognised box are laid out by that box's table.
+            writer.boxes = []
+            for found in art?.boxes ?? [] {
+                let inside = blocks.filter { found.rect.insetBy(dx: -1, dy: -1).contains(CGPoint(x: $0.bounds.midX, y: $0.bounds.midY)) }
+                guard !inside.isEmpty else { continue }
+                blocks.removeAll { found.rect.insetBy(dx: -1, dy: -1).contains(CGPoint(x: $0.bounds.midX, y: $0.bounds.midY)) }
+                blocks.append(.box(writer.boxes.count, found.rect))
+                // An unruled table inside a box is laid out by the box itself
+                // (one line per cell), so the box's shading and dividers fall
+                // between its rows and its columns line up with the rest.
+                let split = inside.flatMap { block -> [Block] in
+                    if case .table(let rows) = block, art?.grids[tableKey(rows)] == nil { return rows.flatMap { $0.cells.map { Block.paragraph([Row(cells: [$0])]) } } }
+                    return [block]
+                }
+                writer.boxes.append((found, split))
+            }
             writer.artwork = art != nil
             writer.grids = art?.grids ?? [:]
             if art == nil {
@@ -509,8 +541,120 @@ enum PDFDocumentReconstruction {
         case .table(let rows):
             let first = Writer().rowHeight(rows, 0), last = Writer().rowHeight(rows, rows.count - 1)
             return (rows[0].bounds.midY + first / 2, rows[rows.count - 1].bounds.midY - last / 2)
-        case .image(let rect): return (rect.maxY, rect.minY)
+        case .image(let rect), .box(_, let rect): return (rect.maxY, rect.minY)
         }
+    }
+
+    /// A box as one table: its frame is the table border, its bands become
+    /// rows with their own fill, side-by-side content shares columns across
+    /// rows and full-width content spans them. Rows grow with their content,
+    /// so text and shading stay together in any word processor.
+    private static func boxed(_ index: Int, left: CGFloat, right: CGFloat, page: PDFPage, box: CGRect, margin: CGFloat, previousBottom: inout CGFloat, writer: inout Writer, options: OperationOptions, token: CancellationToken) throws -> String {
+        let (shape, blocks) = writer.boxes[index]
+        let rect = shape.rect, grids = writer.grids
+        let innerLeft = rect.minX + shape.stroke, innerRight = rect.maxX - shape.stroke
+        // Horizontal cut lines: the frame, every band edge, and the middle of
+        // each gap between content that no band edge already separates.
+        let extents = blocks.map { extent($0, grids: grids) }.sorted { $0.top > $1.top }
+        var groups: [(top: CGFloat, bottom: CGFloat)] = []
+        for item in extents {
+            if let last = groups.last, item.top > last.bottom + 1.5 { groups[groups.count - 1].bottom = min(last.bottom, item.bottom) } else { groups.append(item) }
+        }
+        var cuts: [CGFloat] = [rect.maxY, rect.minY]
+        for panel in shape.panels {
+            // Text boxes are estimates: an edge within 3pt of content still cuts.
+            for edge in [panel.rect.maxY, panel.rect.minY] where edge < rect.maxY - 1.5 && edge > rect.minY + 1.5 && !groups.contains(where: { edge < $0.top - 3 && edge > $0.bottom + 3 }) { cuts.append(edge) }
+        }
+        for divider in shape.dividers where !groups.contains(where: { divider.y < $0.top - 0.5 && divider.y > $0.bottom + 0.5 }) { cuts.append(divider.y) }
+        for (upper, lower) in zip(groups, groups.dropFirst()) where !cuts.contains(where: { $0 <= upper.bottom + 3 && $0 >= lower.top - 3 }) { cuts.append((upper.bottom + lower.top) / 2) }
+        cuts.sort(by: >)
+        var lines: [CGFloat] = []
+        for cut in cuts where lines.last.map({ $0 - cut > 1 }) ?? true { lines.append(cut) }
+        guard lines.count >= 2 else { return "" }
+        // Each row's content, fill and layout.
+        var rowsContent: [(top: CGFloat, bottom: CGFloat, blocks: [Block], fill: String?, region: Region?)] = []
+        for (top, bottom) in zip(lines, lines.dropFirst()) {
+            let inside = blocks.filter { let e = extent($0, grids: grids); let middle = (e.top + e.bottom) / 2; return middle <= top && middle > bottom }
+            func overlap(_ panel: CGRect) -> CGFloat { max(0, min(panel.maxY, top) - max(panel.minY, bottom)) / max(0.1, top - bottom) }
+            let fill = shape.panels.max { overlap($0.rect) < overlap($1.rect) }.flatMap { overlap($0.rect) >= 0.45 ? $0.color : nil }
+            rowsContent.append((top, bottom, inside, fill, inside.isEmpty ? nil : layout(inside, left: innerLeft, right: innerRight, depth: 1)))
+        }
+        // Shared columns from every row laid out side by side.
+        let columnRows = rowsContent.compactMap { row -> [(region: Region, left: CGFloat, right: CGFloat)]? in if case .columns(let parts)? = row.region { return parts }; return nil }
+        var edges: [CGFloat] = []
+        var placement: [[Int: Region]?] = Array(repeating: nil, count: rowsContent.count)
+        if let guide = columnRows.max(by: { $0.count < $1.count }) {
+            let guideEdges = guide.dropLast().map(\.right)
+            var spans = [(minX: CGFloat, maxX: CGFloat)](repeating: (.greatestFiniteMagnitude, -.greatestFiniteMagnitude), count: guide.count)
+            var valid = true
+            for (index, row) in rowsContent.enumerated() {
+                guard case .columns(let parts)? = row.region else { continue }
+                var cells: [Int: Region] = [:]
+                for part in parts {
+                    let b = part.region.blocks.map(\.bounds), minX = b.map(\.minX).min() ?? 0, maxX = b.map(\.maxX).max() ?? 0
+                    let column = guideEdges.filter { $0 < (minX + maxX) / 2 }.count
+                    if cells[column] != nil { valid = false }
+                    cells[column] = part.region
+                    spans[column] = (min(spans[column].minX, minX), max(spans[column].maxX, maxX))
+                }
+                placement[index] = cells
+            }
+            if valid, (0..<(spans.count - 1)).allSatisfy({ spans[$0].maxX < spans[$0 + 1].minX - 2 && spans[$0].minX <= spans[$0].maxX }) {
+                edges = (0..<(spans.count - 1)).map { (spans[$0].maxX + spans[$0 + 1].minX) / 2 }
+            } else { placement = Array(repeating: nil, count: rowsContent.count) }
+        }
+        let bounds = [rect.minX] + edges + [rect.maxX]
+        let count = bounds.count - 1
+        var xml = ""
+        if previousBottom - rect.maxY > 0.5 { xml += "<text:p text:style-name=\"\(writer.paragraphStyle(left: 0, before: 0, lineHeight: previousBottom - rect.maxY, size: 1))\"/>" }
+        let name = "Box\(writer.tableIndex)"; writer.tableIndex += 1
+        writer.styles += "<style:style style:name=\"\(name)\" style:family=\"table\"><style:table-properties table:align=\"left\" style:width=\"\(rect.width)pt\" fo:margin-left=\"\(max(0, rect.minX - left))pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/></style:style>"
+        var columns = ""
+        for index in 0..<count {
+            let column = "\(name)Column\(index)"
+            writer.styles += "<style:style style:name=\"\(column)\" style:family=\"table-column\"><style:table-column-properties style:column-width=\"\(bounds[index + 1] - bounds[index])pt\"/></style:style>"
+            columns += "<table:table-column table:style-name=\"\(column)\"/>"
+        }
+        let rule = shape.border.map { "\(String(format: "%.2f", shape.stroke))pt solid \($0)" } ?? "none"
+        var cellStyles: [String: String] = [:]
+        func cellStyle(fill: String?, top: Bool, bottom: Bool, first: Bool, last: Bool, divider: String? = nil) -> String {
+            let key = "\(fill ?? "")|\(top)\(bottom)\(first)\(last)|\(divider ?? "")"
+            if let cached = cellStyles[key] { return cached }
+            let style = "\(name)Cell\(cellStyles.count)"; cellStyles[key] = style
+            let sides = "fo:border-top=\"\(top ? rule : "none")\" fo:border-bottom=\"\(bottom ? rule : divider ?? "none")\" fo:border-left=\"\(first ? rule : "none")\" fo:border-right=\"\(last ? rule : "none")\""
+            writer.styles += "<style:style style:name=\"\(style)\" style:family=\"table-cell\"><style:table-cell-properties \(sides) fo:padding=\"0pt\" style:vertical-align=\"top\"\(fill.map { " fo:background-color=\"\($0)\"" } ?? "")/></style:style>"
+            return style
+        }
+        var body = ""
+        let outerKeep = writer.keepLines; writer.keepLines = true; defer { writer.keepLines = outerKeep }
+        for (index, row) in rowsContent.enumerated() {
+            try token.check()
+            let isTop = index == 0, isBottom = index == rowsContent.count - 1
+            // A separator rule at this row's lower edge becomes its bottom border.
+            let divider = shape.dividers.first { abs($0.y - row.bottom) < 1.5 }.map { "\(String(format: "%.2f", $0.weight))pt solid \($0.color)" }
+            let rowStyle = "\(name)Row\(index)"
+            writer.styles += "<style:style style:name=\"\(rowStyle)\" style:family=\"table-row\"><style:table-row-properties style:min-row-height=\"\(max(1, row.top - row.bottom))pt\"/></style:style>"
+            body += "<table:table-row table:style-name=\"\(rowStyle)\">"
+            func content(_ region: Region?, _ l: CGFloat, _ r: CGFloat) throws -> String {
+                var cellTop = row.top
+                var xml = try region.map { try emit($0, left: l, right: r, page: page, box: box, margin: margin, previousBottom: &cellTop, writer: &writer, options: options, token: token) } ?? ""
+                if xml.isEmpty || xml.hasSuffix("</table:table>") { xml += "<text:p text:style-name=\"DocumentEnd\"/>" }
+                return xml
+            }
+            if let cells = placement[index] {
+                for column in 0..<count {
+                    let l = column == 0 ? innerLeft : bounds[column], r = column == count - 1 ? innerRight : bounds[column + 1]
+                    body += "<table:table-cell table:style-name=\"\(cellStyle(fill: row.fill, top: isTop, bottom: isBottom, first: column == 0, last: column == count - 1, divider: divider))\" office:value-type=\"string\">\(try content(cells[column], l, r))</table:table-cell>"
+                }
+            } else {
+                let span = count > 1 ? " table:number-columns-spanned=\"\(count)\"" : ""
+                body += "<table:table-cell table:style-name=\"\(cellStyle(fill: row.fill, top: isTop, bottom: isBottom, first: true, last: true, divider: divider))\"\(span) office:value-type=\"string\">\(try content(row.region, innerLeft, innerRight))</table:table-cell>"
+                body += String(repeating: "<table:covered-table-cell/>", count: count - 1)
+            }
+            body += "</table:table-row>"
+        }
+        previousBottom = min(previousBottom, rect.minY)
+        return xml + "<table:table table:name=\"\(name)\" table:style-name=\"\(name)\">\(columns)\(body)</table:table>"
     }
 
     /// Several column bands as one table. Columns come from the band with
@@ -619,6 +763,8 @@ enum PDFDocumentReconstruction {
                 case .image(let rect):
                     let png = try PDFOfficeCodec.rasterPNG(page, rect: rect, dpi: options.dpi, token: token)
                     xml += writer.image(rect, png: png, page: frame, margin: margin, gap: max(0, previousBottom - top))
+                case .box(let index, _):
+                    xml += try boxed(index, left: left, right: right, page: page, box: box, margin: margin, previousBottom: &previousBottom, writer: &writer, options: options, token: token)
                 }
                 previousBottom = min(previousBottom, bottom)
             }
@@ -1049,6 +1195,7 @@ enum PDFDocumentReconstruction {
         var ink: [Int]
         var grids: [String: Grid] = [:]
         var pictures: [(rect: CGRect, image: CGImage)] = []
+        var boxes: [Box] = []
         /// A horizontal band of the page, `top`/`bottom` measured in points from the page top.
         func band(_ top: CGFloat, _ bottom: CGFloat) -> (data: Data, jpeg: Bool)? {
             let y0 = max(0, Int((top * scale).rounded(.down))), y1 = min(image.height, Int((bottom * scale).rounded(.up)))
@@ -1060,7 +1207,7 @@ enum PDFDocumentReconstruction {
         }
     }
 
-    private static func artwork(_ page: PDFPage, ink: [(rect: CGRect, color: String?)], tables: [[Row]] = [], pictures: [CGRect] = [], photographic: Bool, token: CancellationToken) throws -> Artwork? {
+    private static func artwork(_ page: PDFPage, ink: [(rect: CGRect, color: String?)], tables: [[Row]] = [], pictures: [CGRect] = [], placed: [CGRect] = [], contents: [CGRect] = [], photographic: Bool, token: CancellationToken) throws -> Artwork? {
         try token.check()
         guard let cgPage = page.pageRef else { return nil }
         let bounds = PDFOfficeCodec.visualBounds(page)
@@ -1069,7 +1216,7 @@ enum PDFDocumentReconstruction {
         guard width > 0, height > 0, width <= 12000, height <= 12000 else { return nil }
         var pixels = [UInt8](repeating: 255, count: width * height * 4)
         var paper: String?, rows = [Int](repeating: 0, count: height)
-        var grids: [String: Grid] = [:], cut: [(rect: CGRect, image: CGImage)] = []
+        var grids: [String: Grid] = [:], cut: [(rect: CGRect, image: CGImage)] = [], found: [Box] = []
         let image: CGImage? = pixels.withUnsafeMutableBytes { raw -> CGImage? in
             guard let context = CGContext(data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
             context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: width, height: height))
@@ -1082,6 +1229,7 @@ enum PDFDocumentReconstruction {
             for table in tables {
                 if let grid = grid(buffer, width: width, height: height, toPixels: toPixels, rows: table) { grids[tableKey(table)] = grid }
             }
+            found = boxes(buffer, width: width, height: height, toPixels: toPixels, contents: contents, pictures: pictures + placed)
             if !pictures.isEmpty, let snapshot = context.makeImage() {
                 for rect in pictures {
                     let r = rect.applying(toPixels).integral
@@ -1098,7 +1246,128 @@ enum PDFDocumentReconstruction {
             return context.makeImage()
         }
         guard let image else { return nil }
-        return Artwork(image: image, scale: scale, paper: paper, photographic: photographic, ink: rows, grids: grids, pictures: cut)
+        return Artwork(image: image, scale: scale, paper: paper, photographic: photographic, ink: rows, grids: grids, pictures: cut, boxes: found)
+    }
+
+    /// Square-cornered framed sections and full-width shaded bands that hold
+    /// text. Each is found as runs of one colour across a pixel row: thin
+    /// stacks are rules (a frame is a top and bottom rule joined by vertical
+    /// rules at both ends), tall stacks are fills. A box is used only when it
+    /// contains text and nothing else is drawn inside it (a logo, a stamp);
+    /// used boxes are cleared from the artwork.
+    private static func boxes(_ pixels: UnsafeMutableBufferPointer<UInt8>, width: Int, height: Int, toPixels: CGAffineTransform, contents: [CGRect], pictures: [CGRect]) -> [Box] {
+        guard !contents.isEmpty else { return [] }
+        func at(_ x: Int, _ y: Int) -> (Int, Int, Int) { let i = (y * width + x) * 4; return (Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])) }
+        func distance(_ a: (Int, Int, Int), _ b: (Int, Int, Int)) -> Int { abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2) }
+        let corners = [at(1, 1), at(width - 2, 1), at(1, height - 2), at(width - 2, height - 2)]
+        let paper = (corners.map(\.0).sorted()[1], corners.map(\.1).sorted()[1], corners.map(\.2).sorted()[1])
+        struct Run { var x0: Int, x1: Int, y0: Int, y1: Int, colour: (Int, Int, Int) }
+        var open: [Run] = [], closed: [Run] = []
+        let shortest = width / 5
+        for y in 0..<height {
+            var found: [(Int, Int, (Int, Int, Int))] = []
+            var x = 0
+            while x < width {
+                let c = at(x, y)
+                if distance(c, paper) <= 12 { x += 1; continue }
+                var end = x
+                while end + 1 < width && distance(at(end + 1, y), c) <= 24 { end += 1 }
+                if end - x + 1 >= shortest { found.append((x, end, c)) }
+                x = end + 1
+            }
+            var next: [Run] = []
+            for run in found {
+                if let i = open.firstIndex(where: { abs($0.x0 - run.0) <= 3 && abs($0.x1 - run.1) <= 3 && distance($0.colour, run.2) <= 24 }) {
+                    var extended = open.remove(at: i); extended.y1 = y; next.append(extended)
+                } else { next.append(Run(x0: run.0, x1: run.1, y0: y, y1: y, colour: run.2)) }
+            }
+            closed += open; open = next
+        }
+        closed += open
+        // An anti-aliased rule spans two pixel rows of different tone: merge
+        // touching thin runs with the same extent into one rule.
+        var rules: [Run] = []
+        // Near-paper thin runs are anti-aliasing and scanner noise, not rules
+        // (light fills are tall and stay below).
+        for run in closed.filter({ $0.y1 - $0.y0 + 1 <= 5 && distance($0.colour, paper) > 30 }).sorted(by: { $0.y0 < $1.y0 }) {
+            if let i = rules.lastIndex(where: { run.y0 - $0.y1 <= 1 && abs($0.x0 - run.x0) <= 4 && abs($0.x1 - run.x1) <= 4 }), run.y1 - rules[i].y0 + 1 <= 6 {
+                rules[i].y1 = max(rules[i].y1, run.y1); rules[i].x0 = min(rules[i].x0, run.x0); rules[i].x1 = max(rules[i].x1, run.x1)
+                if run.colour.0 + run.colour.1 + run.colour.2 < rules[i].colour.0 + rules[i].colour.1 + rules[i].colour.2 { rules[i].colour = run.colour }
+            } else { rules.append(run) }
+        }
+        // Rounded corners (and anything else not a plain rectangle) are left as artwork.
+        // A rounded fill's straight middle stack has the same colour continuing
+        // a few rows above or below it (the shorter corner rows); a rule or
+        // anti-aliased edge right against a square fill does not.
+        func continues(_ run: Run, _ y: Int) -> Bool { y >= 0 && y < height && distance(at((run.x0 + run.x1) / 2, y), run.colour) <= 24 }
+        let fills = closed.filter { $0.y1 - $0.y0 + 1 >= 8 && distance(at($0.x0, $0.y0), $0.colour) <= 30 && distance(at($0.x1, $0.y1), $0.colour) <= 30 && !(continues($0, $0.y0 - 3) && continues($0, $0.y0 - 5)) && !(continues($0, $0.y1 + 3) && continues($0, $0.y1 + 5)) }
+        func vertical(_ x: Int, _ y0: Int, _ y1: Int, _ colour: (Int, Int, Int)) -> Bool {
+            for cx in max(0, x - 4)...min(width - 1, x + 4) {
+                var hits = 0, total = 0
+                for y in stride(from: y0, through: y1, by: 2) { total += 1; let c = at(cx, y); if distance(c, colour) <= 40 && distance(c, paper) > 30 { hits += 1 } }
+                if hits * 100 >= total * 85 { return true }
+            }
+            return false
+        }
+        var frames: [(x0: Int, x1: Int, y0: Int, y1: Int, colour: (Int, Int, Int), stroke: Int)] = []
+        var usedRules = Set<Int>()
+        for (t, top) in rules.enumerated() where !usedRules.contains(t) {
+            guard let b = rules.indices.first(where: { $0 > t && !usedRules.contains($0) && rules[$0].y0 > top.y1 + 8 && abs(rules[$0].x0 - top.x0) <= 4 && abs(rules[$0].x1 - top.x1) <= 4 && distance(rules[$0].colour, top.colour) <= 40 }) else { continue }
+            let bottom = rules[b]
+            // The inside must differ from the rule: otherwise these "rules" are
+            // the rounded ends of a fill.
+            guard vertical(top.x0, top.y1 + 1, bottom.y0 - 1, top.colour), vertical(top.x1, top.y1 + 1, bottom.y0 - 1, top.colour),
+                  distance(at((top.x0 + top.x1) / 2, (top.y1 + bottom.y0) / 2), top.colour) > 40 || distance(at(top.x0 + 8, (top.y1 + bottom.y0) / 2), top.colour) > 40 else { continue }
+            usedRules.insert(t); usedRules.insert(b)
+            frames.append((min(top.x0, bottom.x0), max(top.x1, bottom.x1), top.y0, bottom.y1, top.colour, top.y1 - top.y0 + 1))
+        }
+        let inverse = toPixels.inverted()
+        func page(_ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int) -> CGRect {
+            let a = CGPoint(x: CGFloat(x0), y: CGFloat(height - y0)).applying(inverse), b = CGPoint(x: CGFloat(x1 + 1), y: CGFloat(height - y1 - 1)).applying(inverse)
+            return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+        }
+        func hex(_ c: (Int, Int, Int)) -> String { String(format: "#%02X%02X%02X", c.0, c.1, c.2) }
+        let scale = abs(toPixels.a) > 0 ? abs(toPixels.a) : 1
+        var candidates: [(box: Box, pixels: (x0: Int, x1: Int, y0: Int, y1: Int), fills: [Run], dividers: [Run])] = []
+        var claimed = Set<Int>()
+        for frame in frames {
+            let inner = fills.indices.filter { fills[$0].x0 >= frame.x0 - 2 && fills[$0].x1 <= frame.x1 + 2 && fills[$0].y0 >= frame.y0 - 2 && fills[$0].y1 <= frame.y1 + 2 }
+            claimed.formUnion(inner)
+            let panels = inner.map { (rect: page(fills[$0].x0, fills[$0].y0, fills[$0].x1, fills[$0].y1), color: hex(fills[$0].colour)) }
+            // Separator rules spanning most of the box, away from its edges.
+            let dividers = rules.filter { $0.y0 > frame.y0 + 6 && $0.y1 < frame.y1 - 6 && $0.x0 >= frame.x0 - 2 && $0.x1 <= frame.x1 + 2 && ($0.x1 - $0.x0) * 10 >= (frame.x1 - frame.x0) * 8 }
+            var box = Box(rect: page(frame.x0, frame.y0, frame.x1, frame.y1), border: hex(frame.colour), stroke: max(0.25, CGFloat(frame.stroke) / scale), panels: panels)
+            box.dividers = dividers.map { (y: page(0, $0.y0, 0, $0.y1).midY, color: hex($0.colour), weight: max(0.25, CGFloat($0.y1 - $0.y0 + 1) / scale)) }
+            candidates.append((box, (frame.x0, frame.x1, frame.y0, frame.y1), inner.map { fills[$0] }, dividers))
+        }
+        // Shaded full-width bands without a frame.
+        for (index, fill) in fills.enumerated() where !claimed.contains(index) && fill.x1 - fill.x0 >= width * 2 / 5 {
+            let rect = page(fill.x0, fill.y0, fill.x1, fill.y1)
+            candidates.append((Box(rect: rect, border: nil, stroke: 0, panels: [(rect, hex(fill.colour))]), (fill.x0, fill.x1, fill.y0, fill.y1), [fill], []))
+        }
+        var result: [Box] = []
+        for candidate in candidates {
+            // A frame around a photo or screenshot stays with the picture.
+            guard contents.contains(where: { candidate.box.rect.insetBy(dx: -1, dy: -1).contains(CGPoint(x: $0.midX, y: $0.midY)) }),
+                  !pictures.contains(where: { $0.intersects(candidate.box.rect.insetBy(dx: 2, dy: 2)) }) else { continue }
+            let (x0, x1, y0, y1) = candidate.pixels
+            var stray = 0, checked = 0
+            // Anti-aliased fill edges and the box's own dividers are accounted for.
+            var edgeRows = Set<Int>()
+            for band in candidate.fills { for y in (band.y0 - 2)...(band.y0 + 1) { edgeRows.insert(y) }; for y in (band.y1 - 1)...(band.y1 + 2) { edgeRows.insert(y) } }
+            for divider in candidate.dividers { for y in (divider.y0 - 2)...(divider.y1 + 2) { edgeRows.insert(y) } }
+            for y in stride(from: y0 + 4, to: y1 - 3, by: 2) where !edgeRows.contains(y) {
+                for x in stride(from: x0 + 4, to: x1 - 3, by: 2) {
+                    let expected = candidate.fills.first { x >= $0.x0 && x <= $0.x1 && y >= $0.y0 && y <= $0.y1 }?.colour ?? paper
+                    checked += 1
+                    if distance(at(x, y), expected) > 60 { stray += 1 }
+                }
+            }
+            guard checked > 0, stray * 300 < checked else { continue }
+            fill(pixels, width: width, height: height, rect: CGRect(x: CGFloat(x0) - 2, y: CGFloat(height - 1 - y1) - 2, width: CGFloat(x1 - x0) + 4, height: CGFloat(y1 - y0) + 4))
+            result.append(candidate.box)
+        }
+        return result
     }
 
     /// Paints a pixel rectangle (y-up pixel coordinates) with the paper

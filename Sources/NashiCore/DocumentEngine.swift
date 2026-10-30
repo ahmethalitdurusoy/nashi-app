@@ -44,7 +44,9 @@ public enum DocumentEngine {
                 try EPUBCodec.create(fromHTML: html, title: input.deletingPathExtension().lastPathComponent, at: epub, token: token)
                 return try publish(epub, to: output, token: token)
             }
-            return try publish(office(intermediate, to: format, in: staging, token: token), to: output, token: token)
+            let converted = try office(intermediate, to: format, in: staging, token: token)
+            if format == "docx" { try WordCompatibility.normalise(converted, token: token) }
+            return try publish(converted, to: output, token: token)
         }
 
         var source = input
