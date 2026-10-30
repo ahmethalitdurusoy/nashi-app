@@ -16,11 +16,16 @@ final class PDFEditableReadabilityTests: XCTestCase {
         let xml = try documentXML(docx)
         XCTAssertEqual(try xml.nodes(forXPath: "//*[local-name()='tbl']").count, 2)
         XCTAssertEqual(try xml.nodes(forXPath: "//*[local-name()='tc']").count, 8)
-        XCTAssertTrue(try xml.nodes(forXPath: "//*[local-name()='drawing']").isEmpty, "The readability fix must keep text and tables editable")
+        // The only pictures are the page artwork behind the text; the text
+        // and tables themselves stay editable.
+        let pictures = try xml.nodes(forXPath: "//*[local-name()='docPr']/@*[local-name()='descr' or local-name()='title']").compactMap(\.stringValue)
+        XCTAssertEqual(try xml.nodes(forXPath: "//*[local-name()='drawing']").count, 2)
+        XCTAssertTrue(pictures.contains("Original page artwork"))
         XCTAssertTrue(try xml.nodes(forXPath: "//*[local-name()='t']").contains { $0.stringValue == "Audit PDF page 1" })
+        // White text keeps its colour: the red and blue page artwork behind it keeps it readable.
         let colors = try xml.nodes(forXPath: "//*[local-name()='color']/@*[local-name()='val']").compactMap(\.stringValue)
-        XCTAssertFalse(colors.contains("FFFFFF"))
-        XCTAssertTrue(colors.contains("202020"))
+        XCTAssertTrue(colors.contains("FFFFFF"))
+        XCTAssertFalse(colors.contains("202020"))
         let margins = try xml.nodes(forXPath: "//*[local-name()='pgMar']/@*[local-name()='top']").compactMap { $0.stringValue.flatMap(Int.init) }
         XCTAssertTrue(margins.allSatisfy { $0 <= 240 }, "A 120pt page must not lose 72pt to fixed margins")
 
@@ -30,7 +35,8 @@ final class PDFEditableReadabilityTests: XCTestCase {
             let page = try XCTUnwrap(rendered.page(at: index))
             XCTAssertTrue(page.string?.contains("Audit PDF page \(index + 1)") == true)
             for value in ["Orange", "12.5", "Lemon", "7"] { XCTAssertTrue(page.string?.contains(value) == true) }
-            XCTAssertGreaterThan(try darkPixels(page), 200, "White-on-white text or table borders alone must not pass the render check")
+            XCTAssertGreaterThan(try colouredPixels(page), 20_000, "The red and blue source background must be preserved")
+            XCTAssertGreaterThan(try lightPixels(page), 200, "White text must show on the coloured background, not vanish into white paper")
         }
         XCTAssertEqual(try Data(contentsOf: input), original)
     }
@@ -68,6 +74,20 @@ final class PDFEditableReadabilityTests: XCTestCase {
         try ArchiveCodec.extract(input, into: package, token: .init())
         return try XMLDocument(contentsOf: package.appendingPathComponent("word/document.xml"), options: .nodeLoadExternalEntitiesNever)
     }
+
+    private func pixels(_ page: PDFPage, where test: (UInt8, UInt8, UInt8) -> Bool) throws -> Int {
+        let width = 480, height = 240
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.scaleBy(x: 2, y: 2)
+        context.drawPDFPage(try XCTUnwrap(page.pageRef))
+        let data = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        return (0..<(width * height)).filter { test(data[$0 * 4], data[$0 * 4 + 1], data[$0 * 4 + 2]) }.count
+    }
+    private func colouredPixels(_ page: PDFPage) throws -> Int { try pixels(page) { max($0, $1, $2) - min($0, $1, $2) > 150 } }
+    /// Near-white pixels inside the fully coloured page are the text strokes.
+    private func lightPixels(_ page: PDFPage) throws -> Int { try pixels(page) { $0 > 200 && $1 > 200 && $2 > 200 } }
 
     private func darkPixels(_ page: PDFPage) throws -> Int {
         let width = 480, height = 240

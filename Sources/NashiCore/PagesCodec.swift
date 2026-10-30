@@ -220,7 +220,11 @@ private enum PagesDOCXReader {
                             if child.local == "t" { var run: [String:Any] = ["text":text(child),"character":formatting];if let link {run["link"]=link};runs.append(run) }
                             else if child.local == "tab" { runs.append(["text":"\t","character":formatting]) }
                             else if child.local == "br" || child.local == "cr" { runs.append(["text":"\n","character":formatting]) }
-                            else if ["drawing","pict"].contains(child.local), let image = try image(child) { runs.append(image) }
+                            // Floating pictures arrive wrapped in mc:AlternateContent. A
+                            // PDF page's background artwork has no Pages equivalent.
+                            else if ["drawing","pict","AlternateContent"].contains(child.local),
+                                    !child.descendants("docPr").contains(where: { [$0.attr("title"), $0.attr("descr")].contains(PDFDocumentReconstruction.artworkTitle) }),
+                                    let image = try image(child) { runs.append(image) }
                         }
                     } else if item.local == "hyperlink" {
                         let destination = item.attr("id").flatMap { relationships[$0] }

@@ -1,0 +1,39 @@
+# PDF → Word
+
+Converting a PDF to DOCX rebuilds an editable document and lays the page's own
+picture behind it, so the result both edits like a Word file and looks like the
+PDF.
+
+## What becomes what
+
+| In the PDF | In Word |
+| --- | --- |
+| Text | Editable paragraphs with the source font, size, weight, slant, colour and alignment. Justified paragraphs keep their source line breaks so line counts never change. |
+| Headings, bullet and numbered lines | Separate paragraphs (never merged into the text around them). |
+| Lines repeated at the top/bottom of most pages | The Word header and footer. Page numbers become `PAGE` / `NUMPAGES` fields; header/footer graphics (logo, rules) sit behind them in the header/footer. |
+| Aligned rows of cells | Word tables. Ruled tables get real Word borders, column widths and row heights read from the rules, and cell shading. |
+| Side-by-side blocks (letterhead vs. invoice box, two signature blocks, newspaper columns) | One borderless layout row per band, one cell per column (an XY-cut of the page). |
+| Placed photos and screenshots | Separate pictures at their exact position. |
+| Everything else — page colour, rules, charts, logos, signatures, stamps, seals, watermarks | The page artwork: the page rendered with the editable text lifted out, anchored behind the text. |
+| Text set at an angle (seal rings, stamps, diagonal watermarks) | Stays in the artwork instead of turning into stray letters. |
+| Scanned pages and pictures of text | On-device OCR (Turkish and English); the recognised lines become editable text in their own ink colour, and the scan without that text becomes the artwork. |
+
+Lifting text out of the artwork removes only pixels that match the glyph's ink
+blended with its local background, then refills them from the clean pixels on
+either side. A red seal or blue signature drawn over a line of text therefore
+survives intact, and a watermark under the text stays continuous.
+
+Pages export uses the same reconstruction without the artwork layer (Pages has
+no page-anchored background); light text is then darkened to stay readable.
+
+## Checking fidelity
+
+`scripts/pdf-fidelity/run.sh` generates a corpus — report, contract, invoice,
+scanned and mixed documents covering every case above — converts each to DOCX
+with UForge's engine, re-exports the DOCX to PDF and writes, per page:
+
+- a side-by-side image (original | Word) with a visual similarity score, and
+- a drift report: how many points each line of text moved.
+
+Output lands in `build/pdf-fidelity/compare/`. Unit tests for the individual
+behaviours are in `Tests/NashiCoreTests/PDFLayoutReconstructionTests.swift`.

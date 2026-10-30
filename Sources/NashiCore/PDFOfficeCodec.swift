@@ -7,7 +7,7 @@ import Vision
 /// documents and sheets contain editable extracted/OCR text; slides preserve
 /// the page appearance as full-resolution page images.
 enum PDFOfficeCodec {
-    struct TextCell { var text: String; var rect: CGRect }
+    struct TextCell { var text: String; var rect: CGRect; var color: String? = nil }
 
     static func visualBounds(_ page: PDFPage) -> CGRect {
         let box = page.bounds(for: .mediaBox)
@@ -56,7 +56,7 @@ enum PDFOfficeCodec {
             try content.write(to: output, atomically: true, encoding: .utf8)
             return output
         }
-        return try PDFDocumentReconstruction.document(pdf, at: work.appendingPathComponent("PDF document.fodt"), options: options, token: token)
+        return try PDFDocumentReconstruction.document(pdf, at: work.appendingPathComponent("PDF document.fodt"), options: options, token: token, artwork: format == "docx")
     }
 
     static func text(_ page: PDFPage, token: CancellationToken) throws -> String {
@@ -67,20 +67,51 @@ enum PDFOfficeCodec {
     static func recognizedCells(_ page: PDFPage, token: CancellationToken) throws -> [TextCell] {
         try token.check()
         let bounds = page.bounds(for: .mediaBox)
-        let size = NSSize(width: max(1, bounds.width * 2), height: max(1, bounds.height * 2))
+        let size = NSSize(width: max(1, bounds.width * 3), height: max(1, bounds.height * 3))
         let image = page.thumbnail(of: size, for: .mediaBox)
         var rect = CGRect(origin: .zero, size: size)
         guard let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return [] }
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
-        request.automaticallyDetectsLanguage = true
+        request.recognitionLanguages = ["tr-TR", "en-US"]
         try VNImageRequestHandler(cgImage: cgImage).perform([request])
         try token.check()
+        let width = cgImage.width, height = cgImage.height
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { raw in
+            CGContext(data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)?.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        /// Ink of a recognised line: the near-neutral pixels farthest from the
+        /// line's surrounding paper (dark text on light paper, white on a band).
+        func ink(_ box: CGRect) -> String? {
+            let x0 = max(0, Int(box.minX * CGFloat(width))), x1 = min(width - 1, Int(box.maxX * CGFloat(width)))
+            let y0 = max(0, Int((1 - box.maxY) * CGFloat(height))), y1 = min(height - 1, Int((1 - box.minY) * CGFloat(height)))
+            guard x1 > x0 + 2, y1 > y0 + 2 else { return nil }
+            func at(_ x: Int, _ y: Int) -> (Int, Int, Int) { let i = (y * width + x) * 4; return (Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])) }
+            var ring: [(Int, Int, Int)] = []
+            for x in stride(from: x0, through: x1, by: 3) { if y0 >= 3 { ring.append(at(x, y0 - 3)) }; if y1 + 3 < height { ring.append(at(x, y1 + 3)) } }
+            guard !ring.isEmpty else { return nil }
+            let paper = (ring.map(\.0).sorted()[ring.count / 2], ring.map(\.1).sorted()[ring.count / 2], ring.map(\.2).sorted()[ring.count / 2])
+            var candidates: [(Int, Int, Int)] = []
+            for y in stride(from: y0, through: y1, by: 2) { for x in stride(from: x0, through: x1, by: 2) { let c = at(x, y); if max(c.0, c.1, c.2) - min(c.0, c.1, c.2) < 60 { candidates.append(c) } } }
+            guard !candidates.isEmpty else { return nil }
+            candidates.sort { abs($0.0 - paper.0) + abs($0.1 - paper.1) + abs($0.2 - paper.2) > abs($1.0 - paper.0) + abs($1.1 - paper.1) + abs($1.2 - paper.2) }
+            let top = candidates.prefix(max(1, candidates.count / 10))
+            let c = (top.map(\.0).reduce(0, +) / top.count, top.map(\.1).reduce(0, +) / top.count, top.map(\.2).reduce(0, +) / top.count)
+            guard abs(c.0 - paper.0) + abs(c.1 - paper.1) + abs(c.2 - paper.2) > 90 else { return nil }
+            return String(format: "#%02X%02X%02X", c.0, c.1, c.2)
+        }
         return (request.results ?? []).compactMap { observation in
-            guard let candidate = observation.topCandidates(1).first else { return nil }
+            // A lone recognised character is usually a logo, bullet or mark, not text.
+            guard let candidate = observation.topCandidates(1).first, candidate.confidence >= 0.45,
+                  candidate.string.filter({ $0.isLetter || $0.isNumber }).count >= 2 else { return nil }
+            // Stamps, seals and watermarks are set at an angle. Their text is
+            // kept as part of the page artwork rather than as body text.
+            let dx = (observation.topRight.x - observation.topLeft.x) * size.width, dy = (observation.topRight.y - observation.topLeft.y) * size.height
+            guard abs(atan2(dy, dx)) < 3 * .pi / 180 else { return nil }
             let r = observation.boundingBox
-            return TextCell(text: candidate.string, rect: CGRect(x: bounds.minX + r.minX * bounds.width, y: bounds.minY + r.minY * bounds.height, width: r.width * bounds.width, height: r.height * bounds.height))
+            return TextCell(text: candidate.string, rect: CGRect(x: bounds.minX + r.minX * bounds.width, y: bounds.minY + r.minY * bounds.height, width: r.width * bounds.width, height: r.height * bounds.height), color: ink(r))
         }
     }
 

@@ -6,6 +6,8 @@ import PDFKit
 /// model, so those boundaries are inferred; the resulting objects remain real
 /// editable paragraphs and tables rather than a picture of each document page.
 enum PDFDocumentReconstruction {
+    /// Title of the background picture behind a reconstructed page's text.
+    static let artworkTitle = "Original page artwork"
     /// Deliberate appearance-preserving mode: one raster per PDF page. The
     /// editable reconstruction remains the default and uses the separate path.
     static func preservePages(_ pdf: PDFDocument, at output: URL, options: OperationOptions, token: CancellationToken) throws -> URL {
@@ -28,7 +30,7 @@ enum PDFDocumentReconstruction {
     }
 
     private struct TextStyle: Hashable {
-        var family = "Helvetica"
+        var family = "Arial"
         var size: Double = 12
         var bold = false
         var italic = false
@@ -46,6 +48,7 @@ enum PDFDocumentReconstruction {
         var cells: [Cell]
         var bounds: CGRect { cells.dropFirst().reduce(cells.first?.bounds ?? .zero) { $0.union($1.bounds) } }
         var fontSize: CGFloat { cells.map(\.fontSize).max() ?? 12 }
+        var text: String { cells.map(\.text).joined(separator: " ") }
     }
     private enum Block {
         case paragraph([Row]), table([Row]), image(CGRect)
@@ -56,56 +59,172 @@ enum PDFDocumentReconstruction {
             }
         }
     }
+    /// Editable text recovered from one page, and the ink that text occupies
+    /// in the rendered page (lifted out of the artwork layer behind it).
+    private struct PageText {
+        var rows: [Row]
+        var ink: [(rect: CGRect, color: String?)]
+        var scanned: Bool
+        var photographic: Bool
+    }
+    /// Header and footer rows repeated across pages. Digit groups that follow
+    /// the page number (or equal the page count) become Word fields.
+    private struct Furniture {
+        enum Token { case literal, pageNumber, pageCount }
+        var header: [(row: Row, tokens: [Token])] = []
+        var footer: [(row: Row, tokens: [Token])] = []
+        var removed: [Set<Int>] = []
+        var headerTop: CGFloat = 0, headerBottom: CGFloat = 0
+        var footerTop: CGFloat = 0, footerBottom: CGFloat = 0
+    }
+    private struct SpanKey: Hashable { var style: TextStyle; var scale: Int }
+    /// Rules and shading of a table read from the page artwork. Positions are
+    /// page coordinates: column lines left to right, row lines top to bottom.
+    private struct Grid {
+        var columns: [CGFloat]
+        var rows: [CGFloat]
+        var vertical: Bool
+        var border: String
+        var width: CGFloat
+        var fills: [[String?]]
+    }
+    private static func tableKey(_ rows: [Row]) -> String { "\(Int(rows[0].bounds.minX))x\(Int(rows[0].bounds.midY))x\(rows.count)" }
+
     private struct Writer {
-        var textStyles: [TextStyle: String] = [:]
+        var textStyles: [SpanKey: String] = [:]
+        var fonts: Set<String> = []
+        /// LibreOffice resolves text fonts through declared font faces only.
+        var fontFaces: String { "<office:font-face-decls>" + fonts.sorted().map { "<style:font-face style:name=\"\(DocumentText.escapeXML($0))\" svg:font-family=\"\(DocumentText.escapeXML($0))\"/>" }.joined() + "</office:font-face-decls>" }
         var styles = ""
         var paragraphIndex = 0
         var tableIndex = 0
         var imageIndex = 0
-        mutating func span(_ run: Run) -> String {
-            let name: String
-            if let cached = textStyles[run.style] { name = cached }
-            else {
-                name = "Text\(textStyles.count)"; textStyles[run.style] = name
-                let s = run.style
-                styles += "<style:style style:name=\"\(name)\" style:family=\"text\"><style:text-properties fo:font-family=\"\(DocumentText.escapeXML(s.family))\" fo:font-size=\"\(s.size)pt\" fo:font-weight=\"\(s.bold ? "bold" : "normal")\" fo:font-style=\"\(s.italic ? "italic" : "normal")\" fo:color=\"\(s.color)\"\(s.underline ? " style:text-underline-style=\"solid\" style:text-underline-width=\"auto\"" : "")/></style:style>"
-            }
-            return "<text:span text:style-name=\"\(name)\">\(DocumentText.escapeXML(run.text))</text:span>"
-        }
-        mutating func paragraphStyle(left: CGFloat, before: CGFloat, size: CGFloat, centered: Bool = false) -> String {
-            let name = "Paragraph\(paragraphIndex)"; paragraphIndex += 1
-            styles += "<style:style style:name=\"\(name)\" style:family=\"paragraph\"><style:paragraph-properties fo:margin-left=\"\(max(0, left))pt\" fo:margin-top=\"\(max(0, before))pt\" fo:margin-bottom=\"0pt\" fo:line-height=\"115%\" fo:text-align=\"\(centered ? "center" : "start")\"/><style:text-properties fo:font-size=\"\(max(1, size))pt\"/></style:style>"
+        var artwork = true
+        /// Ruled tables recognised in the artwork, by `tableKey`.
+        var grids: [String: Grid] = [:]
+        mutating func span(_ run: Run, scale: Int = 100) -> String { "<text:span text:style-name=\"\(spanStyle(run.style, scale: scale))\">\(DocumentText.escapeXML(run.text))</text:span>" }
+        mutating func spanStyle(_ s: TextStyle, scale: Int) -> String {
+            let key = SpanKey(style: s, scale: scale)
+            if let cached = textStyles[key] { return cached }
+            let name = "Text\(textStyles.count)"; textStyles[key] = name
+            fonts.insert(s.family)
+            let font = DocumentText.escapeXML(s.family)
+            styles += "<style:style style:name=\"\(name)\" style:family=\"text\"><style:text-properties style:font-name=\"\(font)\" style:font-name-asian=\"\(font)\" style:font-name-complex=\"\(font)\" fo:font-family=\"\(font)\" fo:font-size=\"\(s.size)pt\" fo:font-weight=\"\(s.bold ? "bold" : "normal")\" fo:font-style=\"\(s.italic ? "italic" : "normal")\" fo:color=\"\(s.color)\"\(scale < 100 ? " style:text-scale=\"\(scale)%\"" : "")\(s.underline ? " style:text-underline-style=\"solid\" style:text-underline-width=\"auto\"" : "")/></style:style>"
             return name
         }
-        mutating func paragraph(_ rows: [Row], page: CGRect, margin: CGFloat, gap: CGFloat) -> String {
+        mutating func paragraphStyle(left: CGFloat, right: CGFloat = 0, before: CGFloat, lineHeight: CGFloat, size: CGFloat, align: String = "start", tabs: [(CGFloat, String)] = []) -> String {
+            let name = "Paragraph\(paragraphIndex)"; paragraphIndex += 1
+            let stops = tabs.isEmpty ? "" : "<style:tab-stops>" + tabs.map { "<style:tab-stop style:position=\"\(max(0, $0.0))pt\" style:type=\"\($0.1)\"/>" }.joined() + "</style:tab-stops>"
+            styles += "<style:style style:name=\"\(name)\" style:family=\"paragraph\"><style:paragraph-properties fo:margin-left=\"\(max(0, left))pt\" fo:margin-right=\"\(max(0, right))pt\" fo:text-indent=\"0pt\" fo:margin-top=\"\(max(0, before))pt\" fo:margin-bottom=\"0pt\" fo:line-height=\"\(max(1, lineHeight))pt\" fo:text-align=\"\(align)\" fo:hyphenation-ladder-count=\"no-limit\">\(stops)</style:paragraph-properties><style:text-properties fo:font-size=\"\(max(1, size))pt\" fo:hyphenate=\"false\"/></style:style>"
+            return name
+        }
+        mutating func paragraph(_ rows: [Row], page: CGRect, margin: CGFloat, gap: CGFloat, lineHeight: CGFloat) -> String {
             guard let first = rows.first else { return "" }
             let rect = rows.dropFirst().reduce(first.bounds) { $0.union($1.bounds) }
-            let center = rows.count == 1 && first.fontSize >= 18 && abs(rect.midX - page.midX) < 18
-            let style = paragraphStyle(left: center ? 0 : rect.minX - page.minX - margin, before: gap, size: first.fontSize, centered: center)
+            let contentLeft = page.minX + margin, contentRight = page.maxX - margin
+            var align = "start", left = rect.minX - contentLeft
+            if rows.count == 1 {
+                if abs(rect.midX - page.midX) < 6 && rect.minX - contentLeft > 24 { align = "center"; left = 0 }
+                else if contentRight - rect.maxX < 4 && rect.minX - contentLeft > 60 { align = "end"; left = 0 }
+            } else {
+                let ends = rows.dropLast().map(\.bounds.maxX)
+                if let widest = ends.max(), ends.allSatisfy({ widest - $0 < 2.5 }), widest - rect.minX > 120 { align = "justify" }
+            }
+            // Keep the source line breaks: a substituted font that runs a
+            // little wider is condensed instead of wrapping onto extra lines.
+            let scale = rows.enumerated().map { index, row -> Int in
+                guard index < rows.count - 1 || rows.count == 1 || align != "justify" else { return 100 }
+                return condensing(row)
+            }.min() ?? 100
+            // Cells on one line (label … value) sit on tab stops at their source positions.
+            var tabs: [(CGFloat, String)] = []
+            if rows.count == 1, first.cells.count > 1 {
+                align = "start"; left = first.cells[0].bounds.minX - contentLeft
+                for cell in first.cells.dropFirst() {
+                    let next = first.cells.firstIndex { $0.bounds.minX > cell.bounds.minX }.map { first.cells[$0] }
+                    let rightAligned = contentRight - cell.bounds.maxX < 24 || (next == nil && cell.text.first?.isNumber == true)
+                    tabs.append(rightAligned ? (cell.bounds.maxX - contentLeft - left, "right") : (cell.bounds.minX - contentLeft - left, "left"))
+                }
+            }
+            // Wrapped text keeps the source column width, so lines break where they did.
+            let blockRight = rows.map(\.bounds.maxX).max() ?? rect.maxX
+            let rightIndent = rows.count > 1 ? max(0, contentRight - blockRight - 1) : 0
+            let style = paragraphStyle(left: left, right: rightIndent, before: gap, lineHeight: lineHeight, size: first.fontSize, align: align, tabs: tabs)
             var content = ""
             for (line, row) in rows.enumerated() {
-                if line > 0 { content += " " }
+                // Justified paragraphs keep each source line (Word stretches a
+                // line ending in a soft break), so the line count cannot change
+                // with a renderer's own spacing. Ragged text flows normally.
+                if line > 0 { content += align == "justify" ? " <text:line-break/>" : " " }
                 for (column, cell) in row.cells.enumerated() {
                     if column > 0 { content += "<text:tab/>" }
-                    for run in cell.runs { content += span(run) }
+                    for run in cell.runs { content += span(run, scale: scale) }
+                }
+            }
+            return "<text:p text:style-name=\"\(style)\">\(content)</text:p>"
+        }
+        func condensing(_ row: Row) -> Int {
+            var measured: CGFloat = 0
+            for cell in row.cells { for run in cell.runs { measured += PDFDocumentReconstruction.width(of: run.text, style: run.style) } }
+            let source = row.cells.map(\.bounds.width).reduce(0, +)
+            guard measured > 0, source > 0, source / measured < 0.995 else { return 100 }
+            return max(70, Int((source / measured * 100).rounded(.down)))
+        }
+        /// Header/footer line: cells laid out on tab stops, page numbers as fields.
+        mutating func furniture(_ row: Row, tokens: [Furniture.Token], page: CGRect, margin: CGFloat, gap: CGFloat = 0) -> String {
+            guard let first = row.cells.first else { return "" }
+            let contentLeft = page.minX + margin, contentRight = page.maxX - margin
+            let left = max(0, first.bounds.minX - contentLeft)
+            var tabs: [(CGFloat, String)] = []
+            for cell in row.cells.dropFirst() {
+                if contentRight - cell.bounds.maxX < 24 { tabs.append((cell.bounds.maxX - contentLeft - left, "right")) }
+                else { tabs.append((cell.bounds.minX - contentLeft - left, "left")) }
+            }
+            let style = paragraphStyle(left: left, before: gap, lineHeight: PDFDocumentReconstruction.lineSpacing([row]), size: row.fontSize, tabs: tabs)
+            var content = "", tokenIndex = 0
+            for (column, cell) in row.cells.enumerated() {
+                if column > 0 { content += "<text:tab/>" }
+                for run in cell.runs {
+                    let name = spanStyle(run.style, scale: 100)
+                    var text = "", output = ""
+                    func flush() { if !text.isEmpty { output += DocumentText.escapeXML(text); text = "" } }
+                    var digits = ""
+                    func flushDigits() {
+                        guard !digits.isEmpty else { return }
+                        let kind = tokenIndex < tokens.count ? tokens[tokenIndex] : .literal; tokenIndex += 1
+                        switch kind {
+                        case .pageNumber: flush(); output += "<text:page-number text:select-page=\"current\">\(digits)</text:page-number>"
+                        case .pageCount: flush(); output += "<text:page-count>\(digits)</text:page-count>"
+                        case .literal: text += digits
+                        }
+                        digits = ""
+                    }
+                    for character in run.text {
+                        if character.isASCII && character.isNumber { digits.append(character) } else { flushDigits(); text.append(character) }
+                    }
+                    flushDigits(); flush()
+                    content += "<text:span text:style-name=\"\(name)\">\(output)</text:span>"
                 }
             }
             return "<text:p text:style-name=\"\(style)\">\(content)</text:p>"
         }
         mutating func table(_ rows: [Row], page: CGRect, margin: CGFloat, gap: CGFloat) -> String {
             guard let first = rows.first, first.cells.count > 1 else { return "" }
+            if let grid = grids[PDFDocumentReconstruction.tableKey(rows)] { return ruled(rows, grid: grid, page: page, margin: margin) }
             let name = "Table\(tableIndex)"; tableIndex += 1
             let count = first.cells.count
-            let left = max(0, first.bounds.minX - page.minX - margin)
+            let left = max(0, rows.map(\.bounds.minX).min()! - page.minX - margin - 4)
             var starts = (0..<count).map { column in rows.map { $0.cells[column].bounds.minX }.min() ?? first.cells[column].bounds.minX }
             starts.sort()
             var widths = (0..<(count - 1)).map { max(24, starts[$0 + 1] - starts[$0]) }
-            widths.append(max(48, widths.last ?? 100, rows.map { $0.cells[count - 1].bounds.width + 12 }.max() ?? 48))
+            widths.append(max(48, widths.last ?? 100, rows.map { $0.cells[count - 1].bounds.width + 12 }.max() ?? 48, (rows.map(\.bounds.maxX).max() ?? 0) - starts[count - 1] + 8))
             let available = max(1, page.width - margin * 2 - left)
             let scale = min(1, available / max(1, widths.reduce(0, +)))
             widths = widths.map { $0 * scale }
-            styles += "<style:style style:name=\"\(name)\" style:family=\"table\"><style:table-properties table:align=\"margins\" style:width=\"\(widths.reduce(0, +))pt\" fo:margin-left=\"\(left)pt\" fo:margin-right=\"0pt\" fo:margin-top=\"\(gap)pt\" fo:margin-bottom=\"0pt\"/></style:style>"
-            styles += "<style:style style:name=\"\(name)Cell\" style:family=\"table-cell\"><style:table-cell-properties fo:border=\"0.5pt solid #999999\" fo:padding=\"4pt\" style:vertical-align=\"middle\"/></style:style>"
+            styles += "<style:style style:name=\"\(name)\" style:family=\"table\"><style:table-properties table:align=\"left\" style:width=\"\(widths.reduce(0, +))pt\" fo:margin-left=\"\(left)pt\" fo:margin-right=\"0pt\" fo:margin-top=\"\(max(0, gap))pt\" fo:margin-bottom=\"0pt\"/></style:style>"
+            // With the page artwork behind the text, the source's own rules and
+            // shading show through; the cells carry no second set of borders.
+            styles += "<style:style style:name=\"\(name)Cell\" style:family=\"table-cell\"><style:table-cell-properties fo:border=\"\(artwork ? "none" : "0.5pt solid #999999")\" fo:padding-left=\"4pt\" fo:padding-right=\"4pt\" fo:padding-top=\"0pt\" fo:padding-bottom=\"0pt\" style:vertical-align=\"middle\"/></style:style>"
             var columns = ""
             for (index, width) in widths.enumerated() {
                 let column = "\(name)Column\(index)"
@@ -114,63 +233,190 @@ enum PDFDocumentReconstruction {
             }
             var contents = ""
             for (index, row) in rows.enumerated() {
-                let height = index + 1 < rows.count ? max(row.fontSize + 8, abs(row.bounds.midY - rows[index + 1].bounds.midY)) : max(row.fontSize + 8, rows.count > 1 ? abs(rows[index - 1].bounds.midY - row.bounds.midY) : row.fontSize + 8)
+                let height = rowHeight(rows, index)
                 let rowStyle = "\(name)Row\(index)"
-                styles += "<style:style style:name=\"\(rowStyle)\" style:family=\"table-row\"><style:table-row-properties style:min-row-height=\"\(height)pt\"/></style:style>"
+                styles += "<style:style style:name=\"\(rowStyle)\" style:family=\"table-row\"><style:table-row-properties style:row-height=\"\(height)pt\"/></style:style>"
                 contents += "<table:table-row table:style-name=\"\(rowStyle)\">"
-                for cell in row.cells {
+                for (column, cell) in row.cells.enumerated() {
+                    let columnStart = starts[column] - 4, columnEnd = columnStart + widths[column]
+                    let align = columnEnd - cell.bounds.maxX < 10 && cell.bounds.minX - columnStart > 14 ? "end" : abs(cell.bounds.midX - (columnStart + columnEnd) / 2) < 3 && cell.bounds.minX - columnStart > 10 ? "center" : "start"
+                    let paragraph = paragraphStyle(left: 0, before: 0, lineHeight: max(cell.fontSize * 1.2, cell.bounds.height), size: cell.fontSize, align: align)
                     var value = ""
                     for run in cell.runs { value += span(run) }
-                    contents += "<table:table-cell table:style-name=\"\(name)Cell\" office:value-type=\"string\"><text:p>\(value)</text:p></table:table-cell>"
+                    contents += "<table:table-cell table:style-name=\"\(name)Cell\" office:value-type=\"string\"><text:p text:style-name=\"\(paragraph)\">\(value)</text:p></table:table-cell>"
                 }
                 contents += "</table:table-row>"
             }
             return "<table:table table:name=\"\(name)\" table:style-name=\"\(name)\">\(columns)\(contents)</table:table>"
         }
+        /// A table whose rules and shading were read from the source: real
+        /// Word borders and cell fills at the source's column and row lines.
+        mutating func ruled(_ rows: [Row], grid: Grid, page: CGRect, margin: CGFloat) -> String {
+            let name = "Table\(tableIndex)"; tableIndex += 1
+            let count = rows[0].cells.count
+            let contentLeft = page.minX + margin
+            let xs = grid.columns
+            let widths = (0..<count).map { max(6, xs[$0 + 1] - xs[$0]) }
+            styles += "<style:style style:name=\"\(name)\" style:family=\"table\"><style:table-properties table:align=\"left\" style:width=\"\(widths.reduce(0, +))pt\" fo:margin-left=\"\(max(0, xs[0] - contentLeft))pt\" fo:margin-right=\"0pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/></style:style>"
+            var columns = ""
+            for (index, width) in widths.enumerated() {
+                let column = "\(name)Column\(index)"
+                styles += "<style:style style:name=\"\(column)\" style:family=\"table-column\"><style:table-column-properties style:column-width=\"\(width)pt\"/></style:style>"
+                columns += "<table:table-column table:style-name=\"\(column)\"/>"
+            }
+            let rule = "\(String(format: "%.2f", max(0.25, grid.width)))pt solid \(grid.border)"
+            var cellStyles: [String: String] = [:], contents = ""
+            for (index, row) in rows.enumerated() {
+                let rowStyle = "\(name)Row\(index)"
+                styles += "<style:style style:name=\"\(rowStyle)\" style:family=\"table-row\"><style:table-row-properties style:row-height=\"\(max(4, grid.rows[index] - grid.rows[index + 1]))pt\"/></style:style>"
+                contents += "<table:table-row table:style-name=\"\(rowStyle)\">"
+                for (column, cell) in row.cells.enumerated() {
+                    let fill = grid.fills[index][column]
+                    let padding = max(1, min(12, cell.bounds.minX - xs[column]))
+                    let key = "\(fill ?? "")|\(Int(padding * 4))"
+                    let cellStyle: String
+                    if let cached = cellStyles[key] { cellStyle = cached } else {
+                        cellStyle = "\(name)Cell\(cellStyles.count)"; cellStyles[key] = cellStyle
+                        let borders = grid.vertical ? "fo:border=\"\(rule)\"" : "fo:border-top=\"\(rule)\" fo:border-bottom=\"\(rule)\" fo:border-left=\"none\" fo:border-right=\"none\""
+                        styles += "<style:style style:name=\"\(cellStyle)\" style:family=\"table-cell\"><style:table-cell-properties \(borders) fo:padding-left=\"\(padding)pt\" fo:padding-right=\"\(padding)pt\" fo:padding-top=\"0pt\" fo:padding-bottom=\"0pt\" style:vertical-align=\"middle\"\(fill.map { " fo:background-color=\"\($0)\"" } ?? "")/></style:style>"
+                    }
+                    let start = xs[column], end = xs[column + 1]
+                    let align = end - cell.bounds.maxX < padding + 3 && cell.bounds.minX - start > padding + 6 ? "end" : abs(cell.bounds.midX - (start + end) / 2) < 3 && cell.bounds.minX - start > padding + 4 ? "center" : "start"
+                    let paragraph = paragraphStyle(left: 0, before: 0, lineHeight: max(cell.fontSize * 1.2, cell.bounds.height), size: cell.fontSize, align: align)
+                    var value = ""
+                    for run in cell.runs { value += span(run) }
+                    contents += "<table:table-cell table:style-name=\"\(cellStyle)\" office:value-type=\"string\"><text:p text:style-name=\"\(paragraph)\">\(value)</text:p></table:table-cell>"
+                }
+                contents += "</table:table-row>"
+            }
+            return "<table:table table:name=\"\(name)\" table:style-name=\"\(name)\">\(columns)\(contents)</table:table>"
+        }
+        func rowHeight(_ rows: [Row], _ index: Int) -> CGFloat {
+            let row = rows[index], minimum = row.fontSize * 1.25
+            if rows.count == 1 { return max(minimum, row.bounds.height + 6) }
+            let neighbour = index + 1 < rows.count ? rows[index + 1] : rows[index - 1]
+            return max(minimum, abs(row.bounds.midY - neighbour.bounds.midY))
+        }
         mutating func image(_ rect: CGRect, png: Data, page: CGRect, margin: CGFloat, gap: CGFloat) -> String {
             imageIndex += 1
             let left = max(0, rect.minX - page.minX - margin)
             let scale = min(1, max(1, page.width - margin * 2 - left) / max(1, rect.width))
-            let style = paragraphStyle(left: left, before: gap, size: 1)
+            let style = paragraphStyle(left: left, before: gap, lineHeight: rect.height * scale, size: 1)
             return "<text:p text:style-name=\"\(style)\"><draw:frame draw:name=\"PDF image \(imageIndex)\" text:anchor-type=\"as-char\" svg:width=\"\(rect.width * scale)pt\" svg:height=\"\(rect.height * scale)pt\"><draw:image><office:binary-data>\(png.base64EncodedString())</office:binary-data></draw:image></draw:frame></text:p>"
         }
     }
 
-    static func document(_ pdf: PDFDocument, at output: URL, options: OperationOptions, token: CancellationToken) throws -> URL {
-        var writer = Writer(), body = "", pageLayouts = "", masters = ""
+    /// `artwork`: lay the original page picture (minus the editable text)
+    /// behind the text. Word renders it faithfully; Pages output keeps a plain
+    /// white page with readability-adjusted text colours instead.
+    static func document(_ pdf: PDFDocument, at output: URL, options: OperationOptions, token: CancellationToken, artwork withArtwork: Bool = true) throws -> URL {
+        var pages: [(page: PDFPage, box: CGRect, text: PageText)] = []
         for index in 0..<pdf.pageCount {
             try token.check()
             guard let page = pdf.page(at: index) else { continue }
-            let box = page.bounds(for: .mediaBox)
+            pages.append((page, page.bounds(for: .mediaBox), try pageText(page, readableOnWhite: !withArtwork, token: token)))
+        }
+        let furniture = furniture(pages.map { ($0.box, $0.text.rows) })
+        // Content set close to the paper edge (scans, full-bleed letterheads)
+        // gets a narrower page margin rather than spilling onto a new page.
+        var reach: [String: (top: CGFloat, bottom: CGFloat)] = [:]
+        for (index, entry) in pages.enumerated() {
+            let removed = index < furniture.removed.count ? furniture.removed[index] : []
+            let extents = entry.text.rows.enumerated().filter { !removed.contains($0.offset) }.map { extent(.paragraph([$0.element])) }
+            guard let highest = extents.map(\.top).max(), let lowest = extents.map(\.bottom).min() else { continue }
+            let key = "\(entry.box.width)x\(entry.box.height)", current = reach[key] ?? (.greatestFiniteMagnitude, .greatestFiniteMagnitude)
+            reach[key] = (min(current.top, entry.box.maxY - highest), min(current.bottom, lowest - entry.box.minY))
+        }
+        var writer = Writer(), body = "", pageLayouts = "", masters = ""
+        // One page style per page size: consecutive pages share it, so Word
+        // sees a single section with one header and footer.
+        var pageStyles: [String: String] = [:], previousStyle = ""
+        writer.styles += "<style:style style:name=\"ArtworkAnchor\" style:family=\"paragraph\"><style:paragraph-properties fo:line-height=\"0.1pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/><style:text-properties fo:font-size=\"0.1pt\"/></style:style>"
+        writer.styles += "<style:style style:name=\"PageArtwork\" style:family=\"graphic\"><style:graphic-properties style:wrap=\"run-through\" style:run-through=\"background\" style:vertical-pos=\"from-top\" style:vertical-rel=\"page\" style:horizontal-pos=\"from-left\" style:horizontal-rel=\"page\" fo:margin-left=\"0pt\" fo:margin-right=\"0pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\" style:flow-with-text=\"false\" draw:stroke=\"none\" draw:fill=\"none\"/></style:style>"
+        for (index, entry) in pages.enumerated() {
+            try token.check()
+            let (page, box, text) = entry
             // A fixed half-inch margin consumes most of a small PDF page.
             // Cap the ordinary margin while reserving at least 90% of a small
             // page's narrow dimension for editable content.
             let margin = min(36, min(box.width, box.height) * 0.05)
-            let rows = try textRows(page, token: token)
-            var blocks = textBlocks(rows)
-            let nativeText = !(page.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            for rect in try PDFPlacedImages.regions(page, token: token) {
-                if !nativeText && !rows.isEmpty && rect.width * rect.height > box.width * box.height * 0.8 { continue }
-                blocks.append(.image(rect))
+            let removed = index < furniture.removed.count ? furniture.removed[index] : []
+            let rows = text.rows.enumerated().filter { !removed.contains($0.offset) }.map(\.element)
+            // Side-by-side items are separate blocks so the layout pass can
+            // find columns; tables stay whole.
+            var blocks: [Block] = textBlocks(rows).flatMap { block -> [Block] in
+                if case .paragraph(let lines) = block, lines.count == 1, lines[0].cells.count > 1 { return lines[0].cells.map { .paragraph([Row(cells: [$0])]) } }
+                return [block]
             }
-            blocks.sort { abs($0.bounds.maxY - $1.bounds.maxY) > 2 ? $0.bounds.maxY > $1.bounds.maxY : $0.bounds.minX < $1.bounds.minX }
-            pageLayouts += "<style:page-layout style:name=\"PageLayout\(index)\"><style:page-layout-properties fo:page-width=\"\(box.width)pt\" fo:page-height=\"\(box.height)pt\" fo:margin=\"\(margin)pt\"/></style:page-layout>"
-            masters += "<style:master-page style:name=\"PageMaster\(index)\" style:page-layout-name=\"PageLayout\(index)\"/>"
-            writer.styles += "<style:style style:name=\"PageStart\(index)\" style:family=\"paragraph\" style:master-page-name=\"PageMaster\(index)\"><style:paragraph-properties\(index > 0 ? " fo:break-before=\"page\"" : "") fo:line-height=\"0.1pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/><style:text-properties fo:font-size=\"0.1pt\"/></style:style>"
-            body += "<text:p text:style-name=\"PageStart\(index)\"/>"
-            var previousBottom = box.maxY - margin
-            for block in blocks {
-                try token.check()
-                let gap = max(0, previousBottom - block.bounds.maxY)
-                switch block {
-                case .paragraph(let rows): body += writer.paragraph(rows, page: box, margin: margin, gap: gap)
-                case .table(let rows): body += writer.table(rows, page: box, margin: margin, gap: gap)
-                case .image(let rect):
-                    let png = try PDFOfficeCodec.rasterPNG(page, rect: rect, dpi: options.dpi, token: token)
-                    body += writer.image(rect, png: png, page: box, margin: margin, gap: gap)
+            // Placed photos become their own pictures in Word, cut from the
+            // artwork (so text recognised inside them is already lifted out).
+            let pictures = text.scanned || !withArtwork ? [] : try PDFPlacedImages.regions(page, token: token).filter { $0.width * $0.height >= 300 && $0.width * $0.height < box.width * box.height * 0.85 }
+            let tables = blocks.compactMap { block -> [Row]? in if case .table(let rows) = block { return rows }; return nil }
+            let art = withArtwork ? try artwork(page, ink: text.ink, tables: tables, pictures: pictures, photographic: text.photographic, token: token) : nil
+            writer.artwork = art != nil
+            writer.grids = art?.grids ?? [:]
+            if art == nil {
+                for rect in try PDFPlacedImages.regions(page, token: token) where text.scanned == false { blocks.append(.image(rect)) }
+            }
+            let hasHeader = !furniture.header.isEmpty, hasFooter = !furniture.footer.isEmpty
+            let edges = reach["\(box.width)x\(box.height)"]
+            // Every page starts with its own break, so extra room at the foot
+            // never moves content; it only stops a tall scan from spilling.
+            let topMargin = max(0, min(margin, (edges?.top ?? margin) - 2)), bottomMargin = max(0, min(margin, (edges?.bottom ?? margin) - 14))
+            let top = hasHeader ? furniture.headerTop : topMargin, bottom = hasFooter ? furniture.footerBottom : bottomMargin
+            let bodyTop = hasHeader ? max(furniture.headerBottom + 4, top) : topMargin
+            let bodyBottom = hasFooter ? max(furniture.footerTop + 4, bottom) : bottomMargin
+            let pageSize = PDFOfficeCodec.visualBounds(page).size
+            // Word paints the header and footer beneath the body, so their
+            // band of the artwork (logo, rules) lives in the header/footer
+            // itself, behind its text; the body artwork covers the rest.
+            let bodyArtTop = hasHeader ? bodyTop : 0, bodyArtBottom = hasFooter ? pageSize.height - bodyBottom : pageSize.height
+            func frame(_ name: String, _ band: (data: Data, jpeg: Bool), y: CGFloat, height: CGFloat) -> String {
+                "<draw:frame draw:style-name=\"PageArtwork\" draw:name=\"\(name)\" text:anchor-type=\"paragraph\" svg:x=\"0pt\" svg:y=\"\(y)pt\" svg:width=\"\(pageSize.width)pt\" svg:height=\"\(height)pt\" draw:z-index=\"0\"><draw:image draw:mime-type=\"\(band.jpeg ? "image/jpeg" : "image/png")\"><office:binary-data>\(band.data.base64EncodedString())</office:binary-data></draw:image><svg:title>\(artworkTitle)</svg:title></draw:frame>"
+            }
+            let sizeKey = "\(box.width)x\(box.height)"
+            let masterName: String
+            if let existing = pageStyles[sizeKey] { masterName = existing } else {
+            masterName = "PageMaster\(pageStyles.count)"; pageStyles[sizeKey] = masterName
+            var layout = "<style:page-layout style:name=\"Layout\(masterName)\"><style:page-layout-properties fo:page-width=\"\(box.width)pt\" fo:page-height=\"\(box.height)pt\" fo:margin-left=\"\(margin)pt\" fo:margin-right=\"\(margin)pt\" fo:margin-top=\"\(top)pt\" fo:margin-bottom=\"\(bottom)pt\"\(art?.paper.map { " fo:background-color=\"\($0)\"" } ?? "")/>"
+            if hasHeader { layout += "<style:header-style><style:header-footer-properties fo:min-height=\"\(bodyTop - top)pt\" fo:margin-bottom=\"0pt\" fo:margin-left=\"0pt\" fo:margin-right=\"0pt\" style:dynamic-spacing=\"false\"/></style:header-style>" }
+            if hasFooter { layout += "<style:footer-style><style:header-footer-properties fo:min-height=\"\(bodyBottom - bottom)pt\" fo:margin-top=\"0pt\" fo:margin-left=\"0pt\" fo:margin-right=\"0pt\" style:dynamic-spacing=\"false\"/></style:footer-style>" }
+            pageLayouts += layout + "</style:page-layout>"
+            var master = "<style:master-page style:name=\"\(masterName)\" style:page-layout-name=\"Layout\(masterName)\">"
+            let headerArt = hasHeader ? art?.band(0, bodyTop).map { "<text:p text:style-name=\"ArtworkAnchor\">" + frame("Header artwork", $0, y: 0, height: bodyTop) + "</text:p>" } ?? "" : ""
+            let footerArt = hasFooter ? art?.band(pageSize.height - bodyBottom, pageSize.height).map { "<text:p text:style-name=\"ArtworkAnchor\">" + frame("Footer artwork", $0, y: pageSize.height - bodyBottom, height: bodyBottom) + "</text:p>" } ?? "" : ""
+            // Header and footer lines keep their spacing from the area's top.
+            func lines(_ rows: [(row: Row, tokens: [Furniture.Token])], from start: CGFloat) -> String {
+                var previous = start, xml = ""
+                for item in rows {
+                    let (rowTop, rowBottom) = extent(.paragraph([item.row]))
+                    xml += writer.furniture(item.row, tokens: item.tokens, page: box, margin: margin, gap: max(0, previous - rowTop))
+                    previous = rowBottom
                 }
-                previousBottom = min(previousBottom, block.bounds.minY)
+                return xml
             }
+            if hasHeader { master += "<style:header>" + headerArt + lines(furniture.header, from: box.maxY - top) + "</style:header>" }
+            if hasFooter { master += "<style:footer>" + footerArt + lines(furniture.footer, from: box.minY + bodyBottom) + "</style:footer>" }
+            masters += master + "</style:master-page>"
+            }
+            let masterAttribute = masterName == previousStyle ? "" : " style:master-page-name=\"\(masterName)\""
+            previousStyle = masterName
+            writer.styles += "<style:style style:name=\"PageStart\(index)\" style:family=\"paragraph\"\(masterAttribute)><style:paragraph-properties\(index > 0 ? " fo:break-before=\"page\"" : "") fo:line-height=\"0.1pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/><style:text-properties fo:font-size=\"0.1pt\"/></style:style>"
+            // The artwork is anchored to its own paragraph after the page
+            // break; anchored in the breaking paragraph, Word would place it
+            // on the previous page.
+            var start = "<text:p text:style-name=\"PageStart\(index)\"/><text:p text:style-name=\"ArtworkAnchor\">"
+            if let band = art?.band(bodyArtTop, bodyArtBottom) { start += frame("Page \(index + 1) artwork", band, y: bodyArtTop, height: bodyArtBottom - bodyArtTop) }
+            for (number, picture) in (art?.pictures ?? []).enumerated() {
+                let representation = NSBitmapImageRep(cgImage: picture.image)
+                let jpeg = picture.image.width * picture.image.height > 250_000
+                guard let data = jpeg ? representation.representation(using: .jpeg, properties: [.compressionFactor: 0.9]) : representation.representation(using: .png, properties: [:]) else { continue }
+                start += "<draw:frame draw:style-name=\"PageArtwork\" draw:name=\"Picture \(index + 1).\(number + 1)\" text:anchor-type=\"paragraph\" svg:x=\"\(picture.rect.minX - box.minX)pt\" svg:y=\"\(box.maxY - picture.rect.maxY)pt\" svg:width=\"\(picture.rect.width)pt\" svg:height=\"\(picture.rect.height)pt\" draw:z-index=\"1\"><draw:image draw:mime-type=\"\(jpeg ? "image/jpeg" : "image/png")\"><office:binary-data>\(data.base64EncodedString())</office:binary-data></draw:image><svg:title>Picture</svg:title></draw:frame>"
+            }
+            body += start + "</text:p>"
+            var previousBottom = box.maxY - bodyTop
+            let region = layout(blocks, left: box.minX + margin, right: box.maxX - margin, depth: 0)
+            body += try emit(region, left: box.minX + margin, right: box.maxX - margin, page: page, box: box, margin: margin, previousBottom: &previousBottom, writer: &writer, options: options, token: token)
         }
         // Word requires a paragraph after a final table. Supplying a tiny one
         // prevents LibreOffice from appending a normal-height paragraph that
@@ -178,16 +424,157 @@ enum PDFDocumentReconstruction {
         writer.styles += "<style:style style:name=\"DocumentEnd\" style:family=\"paragraph\"><style:paragraph-properties fo:line-height=\"0.1pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/><style:text-properties fo:font-size=\"0.1pt\"/></style:style>"
         body += "<text:p text:style-name=\"DocumentEnd\"/>"
         let xml = """
-        <?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text"><office:automatic-styles>\(writer.styles)\(pageLayouts)</office:automatic-styles><office:master-styles>\(masters)</office:master-styles><office:body><office:text>\(body)</office:text></office:body></office:document>
+        <?xml version="1.0" encoding="UTF-8"?><office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text">\(writer.fontFaces)<office:automatic-styles>\(writer.styles)\(pageLayouts)</office:automatic-styles><office:master-styles>\(masters)</office:master-styles><office:body><office:text>\(body)</office:text></office:body></office:document>
         """
         try xml.write(to: output, atomically: true, encoding: .utf8)
         return output
     }
 
-    private static func textRows(_ page: PDFPage, token: CancellationToken) throws -> [Row] {
+    /// PDFKit glyph boxes run from the font's descender to its ascender
+    /// (about 19% / 81% of the box for common text faces).
+    private static func baseline(_ row: Row) -> CGFloat {
+        let lead = row.cells.max { $0.fontSize < $1.fontSize } ?? row.cells[0]
+        return lead.bounds.minY + lead.bounds.height * 0.19
+    }
+
+    // MARK: Layout
+
+    /// A page region: blocks in reading order, regions stacked top to bottom,
+    /// or regions side by side (columns with their x-range).
+    private indirect enum Region {
+        case flow([Block])
+        case stack([Region])
+        case columns([(region: Region, left: CGFloat, right: CGFloat)])
+        var blocks: [Block] {
+            switch self {
+            case .flow(let blocks): return blocks
+            case .stack(let parts): return parts.flatMap(\.blocks)
+            case .columns(let parts): return parts.flatMap(\.region.blocks)
+            }
+        }
+    }
+
+    /// Recursive XY-cut: split at horizontal gaps first (sections one above
+    /// another), then at vertical gutters (columns side by side).
+    private static func layout(_ blocks: [Block], left: CGFloat, right: CGFloat, depth: Int) -> Region {
+        guard blocks.count > 1, depth < 5 else { return .flow(blocks) }
+        let byTop = blocks.sorted { $0.bounds.maxY > $1.bounds.maxY }
+        var bands: [[Block]] = [[byTop[0]]], bottom = byTop[0].bounds.minY
+        for block in byTop.dropFirst() {
+            if bottom - block.bounds.maxY >= 4 { bands.append([block]) } else { bands[bands.count - 1].append(block) }
+            bottom = min(bottom, block.bounds.minY)
+        }
+        if bands.count > 1 { return .stack(bands.map { layout($0, left: left, right: right, depth: depth) }) }
+        let byLeft = blocks.sorted { $0.bounds.minX < $1.bounds.minX }
+        var columns: [[Block]] = [[byLeft[0]]], edge = byLeft[0].bounds.maxX
+        for block in byLeft.dropFirst() {
+            if block.bounds.minX - edge >= 10 { columns.append([block]) } else { columns[columns.count - 1].append(block) }
+            edge = max(edge, block.bounds.maxX)
+        }
+        guard columns.count > 1 else { return .flow(blocks) }
+        var parts: [(region: Region, left: CGFloat, right: CGFloat)] = []
+        for (index, column) in columns.enumerated() {
+            let l = index == 0 ? left : (columns[index - 1].map(\.bounds.maxX).max()! + column.map(\.bounds.minX).min()!) / 2
+            let r = index == columns.count - 1 ? right : (column.map(\.bounds.maxX).max()! + columns[index + 1].map(\.bounds.minX).min()!) / 2
+            parts.append((layout(column, left: l, right: r, depth: depth + 1), l, r))
+        }
+        return .columns(parts)
+    }
+
+    /// Top and bottom of a block's line boxes as Word lays them out.
+    private static func extent(_ block: Block, grids: [String: Grid] = [:]) -> (top: CGFloat, bottom: CGFloat) {
+        if case .table(let rows) = block, let grid = grids[tableKey(rows)] { return (grid.rows[0], grid.rows[grid.rows.count - 1]) }
+        switch block {
+        case .paragraph(let rows):
+            let lineHeight = lineSpacing(rows), last = rows[rows.count - 1]
+            return (baseline(rows[0]) - rows[0].fontSize * 0.212 + lineHeight, baseline(last) - last.fontSize * 0.212)
+        case .table(let rows):
+            let first = Writer().rowHeight(rows, 0), last = Writer().rowHeight(rows, rows.count - 1)
+            return (rows[0].bounds.midY + first / 2, rows[rows.count - 1].bounds.midY - last / 2)
+        case .image(let rect): return (rect.maxY, rect.minY)
+        }
+    }
+
+    private static func emit(_ region: Region, left: CGFloat, right: CGFloat, page: PDFPage, box: CGRect, margin: CGFloat, previousBottom: inout CGFloat, writer: inout Writer, options: OperationOptions, token: CancellationToken) throws -> String {
+        // Writer positions content inside `frame`'s margins; a column is a
+        // narrower frame with the same margin arithmetic.
+        let frame = CGRect(x: left - margin, y: box.minY, width: right - left + margin * 2, height: box.height)
+        switch region {
+        case .stack(let parts):
+            var xml = ""
+            for part in parts { xml += try emit(part, left: left, right: right, page: page, box: box, margin: margin, previousBottom: &previousBottom, writer: &writer, options: options, token: token) }
+            return xml
+        case .flow(let blocks):
+            // Lines of one column re-join into paragraphs once their
+            // neighbours from other columns are out of the way.
+            let tables = blocks.filter { if case .paragraph = $0 { return false }; return true }
+            let lines = blocks.flatMap { block -> [Row] in if case .paragraph(let rows) = block { return rows }; return [] }.sorted { $0.bounds.midY > $1.bounds.midY }
+            let grids = writer.grids
+            let ordered = (textBlocks(lines) + tables).sorted { extent($0, grids: grids).top > extent($1, grids: grids).top }
+            var xml = ""
+            for block in ordered {
+                try token.check()
+                let (top, bottom) = extent(block, grids: grids)
+                switch block {
+                case .paragraph(let rows):
+                    xml += writer.paragraph(rows, page: frame, margin: margin, gap: max(0, previousBottom - top), lineHeight: lineSpacing(rows))
+                case .table(let rows):
+                    // Word tables have no space-before; a spacer line keeps the gap.
+                    let gap = previousBottom - top
+                    if gap > 0.5 { xml += "<text:p text:style-name=\"\(writer.paragraphStyle(left: 0, before: 0, lineHeight: gap, size: 1))\"/>" }
+                    xml += writer.table(rows, page: frame, margin: margin, gap: 0)
+                case .image(let rect):
+                    let png = try PDFOfficeCodec.rasterPNG(page, rect: rect, dpi: options.dpi, token: token)
+                    xml += writer.image(rect, png: png, page: frame, margin: margin, gap: max(0, previousBottom - top))
+                }
+                previousBottom = min(previousBottom, bottom)
+            }
+            return xml
+        case .columns(let parts):
+            // Columns become one borderless table row; each cell holds its
+            // column's own flow, so neither column pushes the other down.
+            let grids = writer.grids
+            let extents = region.blocks.map { extent($0, grids: grids) }
+            let top = extents.map(\.top).max()!, bottom = extents.map(\.bottom).min()!
+            var xml = ""
+            if previousBottom - top > 0.5 { xml += "<text:p text:style-name=\"\(writer.paragraphStyle(left: 0, before: 0, lineHeight: previousBottom - top, size: 1))\"/>" }
+            let name = "Layout\(writer.tableIndex)"; writer.tableIndex += 1
+            writer.styles += "<style:style style:name=\"\(name)\" style:family=\"table\"><style:table-properties table:align=\"left\" style:width=\"\(right - left)pt\" fo:margin-left=\"0pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/></style:style>"
+            writer.styles += "<style:style style:name=\"\(name)Cell\" style:family=\"table-cell\"><style:table-cell-properties fo:border=\"none\" fo:padding=\"0pt\" style:vertical-align=\"top\"/></style:style>"
+            writer.styles += "<style:style style:name=\"\(name)Row\" style:family=\"table-row\"><style:table-row-properties style:min-row-height=\"\(max(1, top - bottom))pt\"/></style:style>"
+            var columns = "", cells = ""
+            for (index, part) in parts.enumerated() {
+                let column = "\(name)Column\(index)"
+                writer.styles += "<style:style style:name=\"\(column)\" style:family=\"table-column\"><style:table-column-properties style:column-width=\"\(part.right - part.left)pt\"/></style:style>"
+                columns += "<table:table-column table:style-name=\"\(column)\"/>"
+                var cellBottom = top
+                var content = try emit(part.region, left: part.left, right: part.right, page: page, box: box, margin: margin, previousBottom: &cellBottom, writer: &writer, options: options, token: token)
+                // A cell must end in a paragraph (and may not be empty).
+                if content.isEmpty || content.hasSuffix("</table:table>") { content += "<text:p text:style-name=\"DocumentEnd\"/>" }
+                cells += "<table:table-cell table:style-name=\"\(name)Cell\" office:value-type=\"string\">\(content)</table:table-cell>"
+            }
+            xml += "<table:table table:name=\"\(name)\" table:style-name=\"\(name)\">\(columns)<table:table-row table:style-name=\"\(name)Row\">\(cells)</table:table-row></table:table>"
+            previousBottom = min(previousBottom, bottom)
+            return xml
+        }
+    }
+
+    private static func lineSpacing(_ rows: [Row]) -> CGFloat {
+        let size = rows.map(\.fontSize).max() ?? 12
+        guard rows.count > 1 else { return max(size * 1.2, rows[0].bounds.height) }
+        return max(size * 1.0, (rows[0].bounds.midY - rows[rows.count - 1].bounds.midY) / CGFloat(rows.count - 1))
+    }
+
+    // MARK: Text
+
+    private static func pageText(_ page: PDFPage, readableOnWhite: Bool, token: CancellationToken) throws -> PageText {
+        let box = page.bounds(for: .mediaBox)
+        let placed = try PDFPlacedImages.regions(page, token: token)
+        let photographic = placed.contains { $0.width * $0.height > box.width * box.height * 0.04 }
         guard let attributed = page.attributedString, attributed.length > 0,
               !attributed.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return try PDFOfficeCodec.recognizedCells(page, token: token).map { Row(cells: [Cell(runs: [.init(text: $0.text, style: TextStyle(size: max(8, Double($0.rect.height) * 0.85)))], bounds: $0.rect)]) }.sorted { $0.bounds.midY > $1.bounds.midY }
+            let cells = try PDFOfficeCodec.recognizedCells(page, token: token)
+            return PageText(rows: ocrRows(cells), ink: cells.map { ($0.rect, $0.color) }, scanned: true, photographic: true)
         }
         let ns = attributed.string as NSString
         var glyphs: [Cell] = []
@@ -206,8 +593,109 @@ enum PDFDocumentReconstruction {
             guard let selection = page.selection(for: range) else { continue }
             let rect = selection.bounds(for: page)
             if rect.isNull || rect.isInfinite || rect.width <= 0 || rect.height <= 0 { continue }
-            glyphs.append(Cell(runs: [.init(text: value, style: style(attributes))], bounds: rect))
+            glyphs.append(Cell(runs: [.init(text: value, style: style(attributes, readableOnWhite: readableOnWhite))], bounds: rect))
         }
+        glyphs = horizontal(glyphs, page: box)
+        var rows = rows(glyphs)
+        var ink = glyphs.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }.map { ($0.bounds, Optional($0.runs[0].style.color)) }
+        // Pictures of text (screenshots, pasted scans) inside a text PDF.
+        let pictured = placed.filter { $0.width * $0.height > box.width * box.height * 0.04 }
+        if !pictured.isEmpty {
+            let native = glyphs.map(\.bounds)
+            let recognized = try PDFOfficeCodec.recognizedCells(page, token: token).filter { cell in
+                pictured.contains { $0.insetBy(dx: -2, dy: -2).contains(CGPoint(x: cell.rect.midX, y: cell.rect.midY)) } && !native.contains { $0.intersects(cell.rect.insetBy(dx: 2, dy: 2)) }
+            }
+            rows += ocrRows(recognized)
+            ink += recognized.map { ($0.rect, $0.color) }
+            rows.sort { $0.bounds.midY > $1.bounds.midY }
+        }
+        return PageText(rows: rows, ink: ink, scanned: false, photographic: photographic)
+    }
+
+    private static func ocrRows(_ cells: [PDFOfficeCodec.TextCell]) -> [Row] {
+        // The recognised text is known, so the size that makes it span its
+        // source width is exact; box height (which varies with ascenders,
+        // descenders and nearby rules) only bounds that estimate.
+        let raw = cells.map { cell -> Double in
+            let byHeight = max(6, Double(cell.rect.height) / 1.3)
+            let unit = Double(width(of: cell.text, style: TextStyle(family: "Arial", size: 10))) / 10
+            guard unit > 0 else { return byHeight }
+            let byWidth = Double(cell.rect.width) / unit
+            return byWidth > byHeight * 0.4 && byWidth < byHeight * 1.6 ? max(5, byWidth) : byHeight
+        }
+        // Box heights jitter from line to line; lines of one size class share one size.
+        var classes: [[Double]] = []
+        for value in raw.sorted() { if let last = classes.last?.first, value <= last * 1.18 { classes[classes.count - 1].append(value) } else { classes.append([value]) } }
+        func size(_ value: Double) -> Double {
+            let group = classes.first { $0.contains(value) } ?? [value]
+            return (group.sorted()[group.count / 2] * 2).rounded() / 2
+        }
+        return zip(cells, raw).map { cell, value in
+            Row(cells: [Cell(runs: [.init(text: cell.text, style: TextStyle(family: "Arial", size: size(value), color: cell.color ?? "#1A1A1A"))], bounds: cell.rect)])
+        }.sorted { $0.bounds.midY > $1.bounds.midY }
+    }
+
+    /// Drops glyphs drawn at an angle (stamps, seals, watermarks, rotated
+    /// labels). They stay in the page artwork instead of becoming stray text.
+    private static func horizontal(_ glyphs: [Cell], page: CGRect) -> [Cell] {
+        guard glyphs.count > 1 else { return glyphs }
+        var rotated = [Bool](repeating: false, count: glyphs.count)
+        func breaks(_ a: Cell, _ b: Cell) -> Bool {
+            let size = max(a.fontSize, b.fontSize)
+            return b.bounds.midX < a.bounds.minX - 1 || abs(b.bounds.midY - a.bounds.midY) > size * 1.2 || b.bounds.minX - a.bounds.maxX > size * 3
+        }
+        func examine(_ range: Range<Int>) {
+            let indices = range.filter { !glyphs[$0].text.trimmingCharacters(in: .whitespaces).isEmpty }
+            guard indices.count >= 2 else { return }
+            let size = indices.map { glyphs[$0].fontSize }.max() ?? 12
+            let xs = indices.map { glyphs[$0].bounds.midX }, ys = indices.map { glyphs[$0].bounds.midY }
+            let n = CGFloat(indices.count), mx = xs.reduce(0, +) / n, my = ys.reduce(0, +) / n
+            var sxx: CGFloat = 0, sxy: CGFloat = 0
+            for (x, y) in zip(xs, ys) { sxx += (x - mx) * (x - mx); sxy += (x - mx) * (y - my) }
+            let slope = sxx > 1 ? sxy / sxx : 0
+            let median = ys.sorted()[ys.count / 2]
+            let off = ys.filter { abs($0 - median) > size * 0.3 }.count
+            let tilted = abs(slope) > 0.07 || (indices.count >= 3 && CGFloat(off) > n * 0.5) || (indices.count == 2 && abs(ys[0] - ys[1]) > size * 0.5)
+            if tilted { for i in range { rotated[i] = true } }
+        }
+        var start = 0, segments: [(Range<Int>, Bool)] = []
+        for i in 1...glyphs.count where i == glyphs.count || breaks(glyphs[i - 1], glyphs[i]) {
+            examine(start..<i)
+            segments.append((start..<i, (start..<i).filter { !glyphs[$0].text.trimmingCharacters(in: .whitespaces).isEmpty }.count <= 1))
+            start = i
+        }
+        // Characters set one by one around a seal (often upside down at the
+        // bottom) form one-glyph segments; they belong with the rotated text
+        // around them.
+        var changed = true
+        while changed {
+            changed = false
+            for (range, isolated) in segments where isolated && !rotated[range.lowerBound] {
+                let near = (max(0, range.lowerBound - 2)..<min(glyphs.count, range.upperBound + 2)).contains { !range.contains($0) && rotated[$0] }
+                if near { for i in range { rotated[i] = true }; changed = true }
+            }
+        }
+        // A seal is a compact cluster of rotated characters. Short runs lying
+        // wholly inside it (upside-down letters at the bottom of the ring)
+        // are part of it; text lines crossing it are not. Page-wide clusters
+        // such as diagonal watermarks are never used this way.
+        var clusters: [(rect: CGRect, count: Int)] = []
+        for i in glyphs.indices where rotated[i] && !glyphs[i].text.trimmingCharacters(in: .whitespaces).isEmpty {
+            let rect = glyphs[i].bounds, reach = glyphs[i].fontSize * 2.5
+            if let c = clusters.firstIndex(where: { $0.rect.insetBy(dx: -reach, dy: -reach).intersects(rect) }) { clusters[c].rect = clusters[c].rect.union(rect); clusters[c].count += 1 }
+            else { clusters.append((rect, 1)) }
+        }
+        let seals = clusters.filter { $0.count >= 6 && $0.rect.width * $0.rect.height < page.width * page.height * 0.06 && max($0.rect.width, $0.rect.height) < min($0.rect.width, $0.rect.height) * 4 }.map { $0.rect.insetBy(dx: -2, dy: -2) }
+        if !seals.isEmpty {
+            for (range, _) in segments where !rotated[range.lowerBound] {
+                let centres = range.filter { !glyphs[$0].text.trimmingCharacters(in: .whitespaces).isEmpty }.map { CGPoint(x: glyphs[$0].bounds.midX, y: glyphs[$0].bounds.midY) }
+                if !centres.isEmpty, seals.contains(where: { seal in centres.allSatisfy { seal.contains($0) } }) { for i in range { rotated[i] = true } }
+            }
+        }
+        return zip(glyphs, rotated).filter { !$0.1 }.map(\.0)
+    }
+
+    private static func rows(_ glyphs: [Cell]) -> [Row] {
         var groups: [[Cell]] = []
         for glyph in glyphs.sorted(by: { $0.bounds.midY > $1.bounds.midY }) {
             if let row = groups.indices.reversed().first(where: { index in
@@ -248,21 +736,41 @@ enum PDFDocumentReconstruction {
         return result.sorted { $0.bounds.midY > $1.bounds.midY }
     }
 
+    private static let listMarker = try! NSRegularExpression(pattern: "^\\s*(?:[•●○▪■◦\\-–*]|\\(?[0-9]{1,3}[.)]|[a-zA-Z][.)])\\s")
+
     private static func textBlocks(_ rows: [Row]) -> [Block] {
+        func overlaps(_ a: Cell, _ b: Cell) -> Bool { a.bounds.minX < b.bounds.maxX - 2 && b.bounds.minX < a.bounds.maxX - 2 }
         func aligned(_ a: Row, _ b: Row) -> Bool {
             guard a.cells.count > 1, a.cells.count == b.cells.count,
                   a.bounds.midY - b.bounds.midY < max(a.fontSize, b.fontSize) * 2.5 + 12 else { return false }
-            return zip(a.cells, b.cells).allSatisfy { abs($0.bounds.minX - $1.bounds.minX) < 18 || abs($0.bounds.maxX - $1.bounds.maxX) < 12 }
+            // Same column structure: each cell sits before the other row's next cell.
+            let ordered = (0..<(a.cells.count - 1)).allSatisfy { max(a.cells[$0].bounds.minX, b.cells[$0].bounds.minX) < min(a.cells[$0 + 1].bounds.minX, b.cells[$0 + 1].bounds.minX) - 2 }
+            return ordered && zip(a.cells, b.cells).allSatisfy { abs($0.bounds.minX - $1.bounds.minX) < 18 || abs($0.bounds.maxX - $1.bounds.maxX) < 12 || overlaps($0, $1) || $0.bounds.width < 40 || $1.bounds.width < 40 }
+        }
+        func bold(_ row: Row) -> Bool {
+            let runs = row.cells.flatMap(\.runs), total = runs.map(\.text.count).reduce(0, +)
+            return total > 0 && runs.filter(\.style.bold).map(\.text.count).reduce(0, +) * 2 > total
+        }
+        func listItem(_ row: Row) -> Bool {
+            let text = row.cells.first?.text ?? ""
+            return listMarker.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
         }
         var blocks: [Block] = [], index = 0
         while index < rows.count {
             if index + 1 < rows.count, aligned(rows[index], rows[index + 1]) {
                 var table = [rows[index]]; index += 1
                 while index < rows.count && aligned(table.last!, rows[index]) { table.append(rows[index]); index += 1 }
-                blocks.append(.table(table)); continue
+                // Long runs of wide prose cells are newspaper columns: they go to
+                // the layout pass as lines, which rebuilds them as columns.
+                let cells = table.flatMap(\.cells)
+                let prose = table.count >= 3 && table[0].cells.count <= 3 && cells.filter { $0.bounds.width > 150 && $0.text.count > 30 }.count * 10 >= cells.count * 6
+                if prose { blocks += table.flatMap { row in row.cells.map { .paragraph([Row(cells: [$0])]) } } }
+                else { blocks.append(.table(table)) }
+                continue
             }
             var paragraph = [rows[index]]; index += 1
             while index < rows.count, let previous = paragraph.last, previous.cells.count == 1, rows[index].cells.count == 1,
+                  !listItem(rows[index]), bold(previous) == bold(rows[index]),
                   abs(previous.bounds.minX - rows[index].bounds.minX) < 8,
                   abs(previous.fontSize - rows[index].fontSize) < 1,
                   previous.bounds.midY - rows[index].bounds.midY < previous.fontSize * 1.65,
@@ -274,21 +782,366 @@ enum PDFDocumentReconstruction {
         return blocks
     }
 
-    private static func style(_ attributes: [NSAttributedString.Key: Any]) -> TextStyle {
+    /// Rows repeated near the top or bottom of most pages become the Word
+    /// header and footer. A single-page document keeps everything in the body.
+    private static func furniture(_ pages: [(box: CGRect, rows: [Row])]) -> Furniture {
+        var result = Furniture()
+        result.removed = Array(repeating: [], count: pages.count)
+        guard pages.count >= 2 else { return result }
+        func key(_ row: Row) -> String { row.text.replacingOccurrences(of: "[0-9]+", with: "#", options: .regularExpression).trimmingCharacters(in: .whitespaces) }
+        let needed = max(2, Int((Double(pages.count) * 0.6).rounded(.up)))
+        for band in [true, false] {
+            var occurrences: [String: [(page: Int, row: Int, offset: CGFloat)]] = [:]
+            for (pageIndex, page) in pages.enumerated() {
+                for (rowIndex, row) in page.rows.enumerated() {
+                    let offset = band ? page.box.maxY - row.bounds.maxY : row.bounds.minY - page.box.minY
+                    guard offset >= 0, offset < page.box.height * (band ? 0.12 : 0.1) else { continue }
+                    occurrences["\(key(row))|\(Int((offset / 6).rounded()))", default: []].append((pageIndex, rowIndex, offset))
+                }
+            }
+            var chosen: [(row: Row, tokens: [Furniture.Token])] = []
+            for (_, hits) in occurrences.sorted(by: { ($0.value.first?.offset ?? 0) < ($1.value.first?.offset ?? 0) }) where Set(hits.map(\.page)).count >= needed {
+                let template = pages[hits[0].page].rows[hits[0].row]
+                let samples = hits.map { (page: $0.page, numbers: digitGroups(pages[$0.page].rows[$0.row].text)) }
+                let count = samples[0].numbers.count
+                var tokens: [Furniture.Token] = []
+                for position in 0..<count {
+                    let values = samples.compactMap { position < $0.numbers.count ? ($0.page, $0.numbers[position]) : nil }
+                    if values.count > 1 && values.allSatisfy({ $0.1 == $0.0 + 1 }) { tokens.append(.pageNumber) }
+                    else if values.allSatisfy({ $0.1 == pages.count }) && tokens.contains(.pageNumber) { tokens.append(.pageCount) }
+                    else { tokens.append(.literal) }
+                }
+                chosen.append((template, tokens))
+                for hit in hits { result.removed[hit.page].insert(hit.row) }
+            }
+            chosen.sort { $0.row.bounds.midY > $1.row.bounds.midY }
+            guard !chosen.isEmpty else { continue }
+            let box = pages[0].box
+            if band {
+                result.header = chosen
+                result.headerTop = max(0, chosen.map { box.maxY - $0.row.bounds.maxY }.min()! - 2)
+                result.headerBottom = chosen.map { box.maxY - $0.row.bounds.minY }.max()!
+            } else {
+                result.footer = chosen
+                result.footerBottom = max(0, chosen.map { $0.row.bounds.minY - box.minY }.min()! - 2)
+                result.footerTop = chosen.map { $0.row.bounds.maxY - box.minY }.max()!
+            }
+        }
+        return result
+    }
+
+    private static func digitGroups(_ text: String) -> [Int] {
+        text.split(whereSeparator: { !($0.isASCII && $0.isNumber) }).compactMap { Int($0) }
+    }
+
+    private static func style(_ attributes: [NSAttributedString.Key: Any], readableOnWhite: Bool) -> TextStyle {
         let font = attributes[.font] as? NSFont ?? NSFont.systemFont(ofSize: 12)
         let traits = font.fontDescriptor.symbolicTraits
-        let family = (font.familyName ?? font.fontName).replacingOccurrences(of: "^[A-Z]{6}\\+", with: "", options: .regularExpression)
+        let family = wordFamily((font.familyName ?? font.fontName).replacingOccurrences(of: "^[A-Z]{6}\\+", with: "", options: .regularExpression))
         let color = (attributes[.foregroundColor] as? NSColor)?.usingColorSpace(.deviceRGB)
         let hex = color.map { color -> String in
             let components = [color.redComponent, color.greenComponent, color.blueComponent].map { max(0, min(1, Double($0))) }
-            let linear = components.map { $0 <= 0.04045 ? $0 / 12.92 : pow(($0 + 0.055) / 1.055, 2.4) }
-            let luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
-            // Editable output has a white page, without the source's vector
-            // background. Light PDF text must not become invisible on that page.
-            if 1.05 / (luminance + 0.05) < 3 { return "#202020" }
+            if readableOnWhite {
+                // Without the source's background behind it, light text would
+                // vanish on the white output page.
+                let linear = components.map { $0 <= 0.04045 ? $0 / 12.92 : pow(($0 + 0.055) / 1.055, 2.4) }
+                let luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+                if 1.05 / (luminance + 0.05) < 3 { return "#202020" }
+            }
             return String(format: "#%02X%02X%02X", Int(components[0] * 255), Int(components[1] * 255), Int(components[2] * 255))
         } ?? "#000000"
-        return TextStyle(family: family, size: (Double(font.pointSize) * 10).rounded() / 10, bold: traits.contains(.bold), italic: traits.contains(.italic), underline: (attributes[.underlineStyle] as? NSNumber)?.intValue ?? 0 != 0, color: hex)
+        let name = font.fontName.lowercased()
+        let bold = traits.contains(.bold) || name.contains("bold") || name.contains("black") || name.contains("heavy") || name.contains("semibold")
+        let italic = traits.contains(.italic) || name.contains("italic") || name.contains("oblique")
+        return TextStyle(family: family, size: (Double(font.pointSize) * 10).rounded() / 10, bold: bold, italic: italic, underline: (attributes[.underlineStyle] as? NSNumber)?.intValue ?? 0 != 0, color: hex)
+    }
+
+    /// Apple's private UI font names (".SFNS…", "SF Pro") do not exist in Word.
+    /// Arial keeps Helvetica-class metrics on both macOS and Windows.
+    static func wordFamily(_ family: String) -> String {
+        let name = family.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty || name.hasPrefix(".") || name.hasPrefix("SF ") || name.hasPrefix("SFPro") || name.hasPrefix("SFNS") || name.hasPrefix("System") || name.contains("AppleSystemUI") { return "Arial" }
+        return name
+    }
+
+    private static func width(of text: String, style: TextStyle) -> CGFloat {
+        var traits: NSFontTraitMask = []
+        if style.bold { traits.insert(.boldFontMask) }
+        if style.italic { traits.insert(.italicFontMask) }
+        let font = NSFontManager.shared.font(withFamily: style.family, traits: traits, weight: 5, size: CGFloat(style.size)) ?? NSFont(name: "Helvetica", size: CGFloat(style.size)) ?? .systemFont(ofSize: CGFloat(style.size))
+        return NSAttributedString(string: text, attributes: [.font: font]).size().width
+    }
+
+    // MARK: Artwork
+
+    /// The page rendered as a picture with the editable text lifted out. Each
+    /// glyph is removed only where a pixel matches that glyph's ink blended
+    /// with the local background, so stamps, signatures and rules drawn over
+    /// or under the text survive intact.
+    private struct Artwork {
+        var image: CGImage
+        var scale: CGFloat
+        var paper: String?
+        var photographic: Bool
+        /// Marked (non-paper) pixels per pixel row, to skip blank crops.
+        var ink: [Int]
+        var grids: [String: Grid] = [:]
+        var pictures: [(rect: CGRect, image: CGImage)] = []
+        /// A horizontal band of the page, `top`/`bottom` measured in points from the page top.
+        func band(_ top: CGFloat, _ bottom: CGFloat) -> (data: Data, jpeg: Bool)? {
+            let y0 = max(0, Int((top * scale).rounded(.down))), y1 = min(image.height, Int((bottom * scale).rounded(.up)))
+            guard y1 - y0 > 2, ink[y0..<y1].reduce(0, +) * 2000 > (y1 - y0) * image.width / 7,
+                  let crop = image.cropping(to: CGRect(x: 0, y: y0, width: image.width, height: y1 - y0)) else { return nil }
+            let representation = NSBitmapImageRep(cgImage: crop)
+            if photographic, let jpeg = representation.representation(using: .jpeg, properties: [.compressionFactor: 0.82]) { return (jpeg, true) }
+            return representation.representation(using: .png, properties: [:]).map { ($0, false) }
+        }
+    }
+
+    private static func artwork(_ page: PDFPage, ink: [(rect: CGRect, color: String?)], tables: [[Row]] = [], pictures: [CGRect] = [], photographic: Bool, token: CancellationToken) throws -> Artwork? {
+        try token.check()
+        guard let cgPage = page.pageRef else { return nil }
+        let bounds = PDFOfficeCodec.visualBounds(page)
+        let scale: CGFloat = 2.5
+        let width = Int(ceil(bounds.width * scale)), height = Int(ceil(bounds.height * scale))
+        guard width > 0, height > 0, width <= 12000, height <= 12000 else { return nil }
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        var paper: String?, rows = [Int](repeating: 0, count: height)
+        var grids: [String: Grid] = [:], cut: [(rect: CGRect, image: CGImage)] = []
+        let image: CGImage? = pixels.withUnsafeMutableBytes { raw -> CGImage? in
+            guard let context = CGContext(data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+            context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            let transform = cgPage.getDrawingTransform(.mediaBox, rect: CGRect(origin: .zero, size: bounds.size), rotate: 0, preserveAspectRatio: true)
+            context.scaleBy(x: scale, y: scale); context.concatenate(transform); context.drawPDFPage(cgPage)
+            let toPixels = transform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+            let buffer = raw.bindMemory(to: UInt8.self)
+            for item in ink { erase(buffer, width: width, height: height, rect: item.rect.applying(toPixels), color: item.color) }
+            paper = paperColour(buffer, width: width, height: height)
+            for table in tables {
+                if let grid = grid(buffer, width: width, height: height, toPixels: toPixels, rows: table) { grids[tableKey(table)] = grid }
+            }
+            if !pictures.isEmpty, let snapshot = context.makeImage() {
+                for rect in pictures {
+                    let r = rect.applying(toPixels).integral
+                    guard let image = snapshot.cropping(to: CGRect(x: r.minX, y: CGFloat(height) - r.maxY, width: r.width, height: r.height)) else { continue }
+                    cut.append((rect, image))
+                    fill(buffer, width: width, height: height, rect: r.insetBy(dx: -1, dy: -1))
+                }
+            }
+            for y in 0..<height {
+                var count = 0
+                for x in stride(from: 0, to: width, by: 7) { let i = (y * width + x) * 4; if Int(buffer[i]) + Int(buffer[i + 1]) + Int(buffer[i + 2]) < 3 * 243 { count += 1 } }
+                rows[y] = count
+            }
+            return context.makeImage()
+        }
+        guard let image else { return nil }
+        return Artwork(image: image, scale: scale, paper: paper, photographic: photographic, ink: rows, grids: grids, pictures: cut)
+    }
+
+    /// Paints a pixel rectangle (y-up pixel coordinates) with the paper
+    /// colour found just outside it.
+    private static func fill(_ pixels: UnsafeMutableBufferPointer<UInt8>, width: Int, height: Int, rect: CGRect) {
+        let x0 = max(0, Int(rect.minX)), x1 = min(width - 1, Int(rect.maxX))
+        let top = max(0, height - 1 - Int(rect.maxY)), bottom = min(height - 1, height - 1 - Int(rect.minY))
+        guard x0 < x1, top < bottom else { return }
+        var ring: [(Int, Int, Int)] = []
+        func at(_ x: Int, _ y: Int) -> (Int, Int, Int) { let i = (y * width + x) * 4; return (Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])) }
+        for x in stride(from: x0, through: x1, by: 3) { if top >= 3 { ring.append(at(x, top - 3)) }; if bottom + 3 < height { ring.append(at(x, bottom + 3)) } }
+        for y in stride(from: top, through: bottom, by: 3) { if x0 >= 3 { ring.append(at(x0 - 3, y)) }; if x1 + 3 < width { ring.append(at(x1 + 3, y)) } }
+        let paper = ring.isEmpty ? (255, 255, 255) : (ring.map(\.0).sorted()[ring.count / 2], ring.map(\.1).sorted()[ring.count / 2], ring.map(\.2).sorted()[ring.count / 2])
+        for y in top...bottom { for x in x0...x1 { let i = (y * width + x) * 4; pixels[i] = UInt8(paper.0); pixels[i + 1] = UInt8(paper.1); pixels[i + 2] = UInt8(paper.2) } }
+    }
+
+    /// Finds the ruled grid of a table (text already lifted out): thin lines
+    /// that differ from the pixels on both sides of them. Accepted only when
+    /// the lines match the table's rows (and columns, when vertical rules
+    /// exist) and nothing else is drawn inside; the table area is then
+    /// cleared from the artwork and becomes real Word borders and fills.
+    private static func grid(_ pixels: UnsafeMutableBufferPointer<UInt8>, width: Int, height: Int, toPixels: CGAffineTransform, rows: [Row]) -> Grid? {
+        let cells = rows.flatMap(\.cells)
+        guard let minX = cells.map(\.bounds.minX).min(), let maxX = cells.map(\.bounds.maxX).max() else { return nil }
+        let pitch = Writer().rowHeight(rows, 0)
+        let area = CGRect(x: minX - 16, y: rows[rows.count - 1].bounds.minY - pitch * 0.8, width: maxX - minX + 32, height: rows[0].bounds.maxY - rows[rows.count - 1].bounds.minY + pitch * 1.6).applying(toPixels)
+        let x0 = max(5, Int(area.minX)), x1 = min(width - 6, Int(area.maxX))
+        let top = max(5, height - 1 - Int(area.maxY)), bottom = min(height - 6, height - 1 - Int(area.minY))
+        guard x1 - x0 > 20, bottom - top > 10 else { return nil }
+        func at(_ x: Int, _ y: Int) -> (Int, Int, Int) { let i = (y * width + x) * 4; return (Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])) }
+        func distance(_ a: (Int, Int, Int), _ b: (Int, Int, Int)) -> Int { abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2) }
+        func lines(_ count: Int, along: Int, _ sample: (Int, Int) -> Bool) -> [(Int, Int)] {
+            var hits: [Int] = []
+            for position in 0..<count {
+                var n = 0, total = 0
+                for t in stride(from: 0, to: along, by: 2) { total += 1; if sample(position, t) { n += 1 } }
+                if n * 10 >= total * 6 { hits.append(position) }
+            }
+            var groups: [(Int, Int)] = []
+            for hit in hits { if let last = groups.last, hit - (last.0 + last.1 - 1) <= 1 { groups[groups.count - 1].1 += 1 } else { groups.append((hit, 1)) } }
+            return groups
+        }
+        let horizontal = lines(bottom - top + 1, along: x1 - x0) { dy, dx in
+            let y = top + dy, x = x0 + dx, p = at(x, y)
+            return distance(p, at(x, y - 4)) > 30 && distance(p, at(x, y + 4)) > 30
+        }
+        let columnCount = rows[0].cells.count
+        guard horizontal.count == rows.count + 1, let firstRule = horizontal.first, let lastRule = horizontal.last else { return nil }
+        // The rules can run well past the text (a short last column): follow
+        // each rule to its ends to find the table's real left and right edges.
+        func ruled(_ x: Int, _ y: Int) -> Bool { let p = at(x, y); return distance(p, at(x, y - 4)) > 30 && distance(p, at(x, y + 4)) > 30 }
+        func reach(_ line: (Int, Int), _ step: Int) -> Int {
+            let y = top + line.0 + line.1 / 2
+            var x = step < 0 ? x0 : x1, miss = 0
+            while x + step > 4 && x + step < width - 5 && miss <= 3 { x += step; miss = ruled(x, y) ? 0 : miss + 1 }
+            return x - step * miss
+        }
+        let tableLeft = horizontal.map { reach($0, -1) }.min()!, tableRight = horizontal.map { reach($0, 1) }.max()!
+        // Vertical rules run between the top and bottom rules.
+        let ruleTop = top + firstRule.0 + firstRule.1, ruleBottom = top + lastRule.0
+        let scanLeft = max(5, tableLeft - 4), scanRight = min(width - 6, tableRight + 4)
+        let vertical = ruleBottom - ruleTop < 6 ? [] : lines(scanRight - scanLeft + 1, along: ruleBottom - ruleTop) { dx, dy in
+            let y = ruleTop + dy, x = scanLeft + dx, p = at(x, y)
+            return distance(p, at(x - 4, y)) > 30 && distance(p, at(x + 4, y)) > 30
+        }
+        guard horizontal.allSatisfy({ $0.1 <= 8 }),
+              vertical.isEmpty || vertical.count == columnCount + 1 || vertical.count == 2, vertical.allSatisfy({ $0.1 <= 8 }) else { return nil }
+        let inverse = toPixels.inverted()
+        func pageY(_ memoryRow: CGFloat) -> CGFloat { CGPoint(x: 0, y: CGFloat(height) - memoryRow).applying(inverse).y }
+        func pageX(_ column: CGFloat) -> CGFloat { CGPoint(x: column, y: 0).applying(inverse).x }
+        let rowLines = horizontal.map { pageY(CGFloat(top + $0.0) + CGFloat($0.1) / 2) }
+        var columnLines: [CGFloat]
+        if vertical.count == columnCount + 1 { columnLines = vertical.map { pageX(CGFloat(scanLeft + $0.0) + CGFloat($0.1) / 2) } }
+        else {
+            // No (or only outer) vertical rules: columns from the text, framed by
+            // the outer rules when present, else by the horizontal rules' ends.
+            let starts = (0..<columnCount).map { c in rows.map { $0.cells[c].bounds.minX }.min()! }
+            let outerLeft = vertical.first.map { pageX(CGFloat(scanLeft + $0.0) + CGFloat($0.1) / 2) } ?? pageX(CGFloat(tableLeft))
+            let outerRight = vertical.last.map { pageX(CGFloat(scanLeft + $0.0) + CGFloat($0.1) / 2) } ?? pageX(CGFloat(tableRight))
+            columnLines = [outerLeft] + starts.dropFirst().map { $0 - 6 } + [outerRight]
+        }
+        // Rule colour and weight.
+        var samples: [(Int, Int, Int)] = []
+        for line in horizontal { for x in stride(from: tableLeft + 6, to: tableRight - 6, by: 5) { samples.append(at(x, top + line.0 + line.1 / 2)) } }
+        guard !samples.isEmpty else { return nil }
+        let rule = (samples.map(\.0).sorted()[samples.count / 2], samples.map(\.1).sorted()[samples.count / 2], samples.map(\.2).sorted()[samples.count / 2])
+        let scale = toPixels.a == 0 ? 1 : abs(toPixels.a)
+        let weight = CGFloat(horizontal.map(\.1).sorted()[horizontal.count / 2]) / scale
+        // Cell shading: median of a few interior points per cell.
+        let toMemory = { (point: CGPoint) -> (Int, Int) in let p = point.applying(toPixels); return (Int(p.x), height - 1 - Int(p.y)) }
+        var fills: [[String?]] = []
+        let paper = at(max(0, tableLeft - 6), max(0, top - 4))
+        for r in 0..<rows.count {
+            var row: [String?] = []
+            for c in 0..<columnCount {
+                var colours: [(Int, Int, Int)] = []
+                for fy in [0.25, 0.5, 0.75] { for fx in [0.15, 0.5, 0.85] {
+                    let point = CGPoint(x: columnLines[c] + (columnLines[c + 1] - columnLines[c]) * fx, y: rowLines[r] - (rowLines[r] - rowLines[r + 1]) * fy)
+                    let (mx, my) = toMemory(point)
+                    if mx > 0, mx < width, my > 0, my < height { colours.append(at(mx, my)) }
+                } }
+                guard !colours.isEmpty else { row.append(nil); continue }
+                let median = (colours.map(\.0).sorted()[colours.count / 2], colours.map(\.1).sorted()[colours.count / 2], colours.map(\.2).sorted()[colours.count / 2])
+                row.append(distance(median, (255, 255, 255)) > 12 && distance(median, paper) > 6 ? String(format: "#%02X%02X%02X", median.0, median.1, median.2) : nil)
+            }
+            fills.append(row)
+        }
+        // Anything else inside the table (a stamp, a logo) keeps the table in the artwork.
+        let (left, upper) = toMemory(CGPoint(x: columnLines[0], y: rowLines[0])), (right, lower) = toMemory(CGPoint(x: columnLines[columnCount], y: rowLines[rows.count]))
+        guard left < right, upper < lower else { return nil }
+        var stray = 0, checked = 0
+        let lineRows = Set(horizontal.flatMap { (top + $0.0 - 3)...(top + $0.0 + $0.1 + 2) })
+        let lineColumns = Set(vertical.flatMap { (scanLeft + $0.0 - 3)...(scanLeft + $0.0 + $0.1 + 2) })
+        for y in stride(from: upper + 3, to: lower - 3, by: 2) where !lineRows.contains(y) {
+            let rowIndex = rowLines.lastIndex { pageY(CGFloat(y)) <= $0 } ?? 0
+            for x in stride(from: left + 3, to: right - 3, by: 2) where !lineColumns.contains(x) {
+                let columnIndex = max(0, min(columnCount - 1, (columnLines.lastIndex { pageX(CGFloat(x)) >= $0 } ?? 0)))
+                let expected = fills[min(rowIndex, rows.count - 1)][columnIndex].flatMap { hex -> (Int, Int, Int)? in Int(hex.dropFirst(), radix: 16).map { (($0 >> 16) & 255, ($0 >> 8) & 255, $0 & 255) } } ?? paper
+                checked += 1
+                if distance(at(x, y), expected) > 60 { stray += 1 }
+            }
+        }
+        guard checked > 0, stray * 400 < checked else { return nil }
+        fill(pixels, width: width, height: height, rect: CGRect(x: CGFloat(left) - 4, y: CGFloat(height - 1 - lower) - 4, width: CGFloat(right - left) + 8, height: CGFloat(lower - upper) + 8))
+        return Grid(columns: columnLines, rows: rowLines, vertical: vertical.count == columnCount + 1, border: String(format: "#%02X%02X%02X", rule.0, rule.1, rule.2), width: max(0.25, weight), fills: fills)
+    }
+
+    /// A tinted page (letterhead paper, coloured report pages) becomes the
+    /// Word page colour; white pages leave it unset.
+    private static func paperColour(_ pixels: UnsafeMutableBufferPointer<UInt8>, width: Int, height: Int) -> String? {
+        var samples: [(Int, Int, Int)] = []
+        for (fx, fy) in [(0.02, 0.02), (0.98, 0.02), (0.02, 0.98), (0.98, 0.98), (0.5, 0.01), (0.5, 0.99), (0.01, 0.5), (0.99, 0.5)] {
+            let i = (Int(Double(height - 1) * fy) * width + Int(Double(width - 1) * fx)) * 4
+            samples.append((Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])))
+        }
+        let first = samples[0]
+        guard samples.allSatisfy({ abs($0.0 - first.0) + abs($0.1 - first.1) + abs($0.2 - first.2) < 12 }),
+              first.0 + first.1 + first.2 < 3 * 250 else { return nil }
+        return String(format: "#%02X%02X%02X", first.0, first.1, first.2)
+    }
+
+    private static func erase(_ pixels: UnsafeMutableBufferPointer<UInt8>, width: Int, height: Int, rect: CGRect, color: String?) {
+        let x0 = max(0, Int(floor(rect.minX)) - 1), x1 = min(width - 1, Int(ceil(rect.maxX)) + 1)
+        let top = max(0, height - 1 - Int(ceil(rect.maxY)) - 1), bottom = min(height - 1, height - 1 - Int(floor(rect.minY)) + 1)
+        guard x0 < x1, top < bottom else { return }
+        func pixel(_ x: Int, _ y: Int) -> (Int, Int, Int) { let i = (y * width + x) * 4; return (Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])) }
+        // Local background: median of the ring just outside the glyph box.
+        var ring: [(Int, Int, Int)] = []
+        for x in stride(from: x0, through: x1, by: 2) {
+            if top >= 2 { ring.append(pixel(x, top - 2)) }
+            if bottom + 2 < height { ring.append(pixel(x, bottom + 2)) }
+        }
+        for y in stride(from: top, through: bottom, by: 2) {
+            if x0 >= 2 { ring.append(pixel(x0 - 2, y)) }
+            if x1 + 2 < width { ring.append(pixel(x1 + 2, y)) }
+        }
+        guard !ring.isEmpty else { return }
+        func median(_ values: [Int]) -> Int { values.sorted()[values.count / 2] }
+        let background = (median(ring.map(\.0)), median(ring.map(\.1)), median(ring.map(\.2)))
+        var ink: (Int, Int, Int)
+        if let color, color.count == 7, let value = Int(color.dropFirst(), radix: 16) {
+            ink = ((value >> 16) & 255, (value >> 8) & 255, value & 255)
+        } else {
+            // Scanned text: the darkest tenth of the box is the ink colour.
+            // Strongly coloured pixels (a stamp crossing the line) are left out.
+            var box: [(Int, Int, Int)] = []
+            for y in top...bottom { for x in x0...x1 { let c = pixel(x, y); if max(c.0, c.1, c.2) - min(c.0, c.1, c.2) < 60 { box.append(c) } } }
+            if box.isEmpty { for y in top...bottom { for x in x0...x1 { box.append(pixel(x, y)) } } }
+            box.sort { $0.0 + $0.1 + $0.2 < $1.0 + $1.1 + $1.2 }
+            let dark = box.prefix(max(1, box.count / 10))
+            ink = (dark.map(\.0).reduce(0, +) / dark.count, dark.map(\.1).reduce(0, +) / dark.count, dark.map(\.2).reduce(0, +) / dark.count)
+        }
+        let d = (ink.0 - background.0, ink.1 - background.1, ink.2 - background.2)
+        let dd = d.0 * d.0 + d.1 * d.1 + d.2 * d.2
+        guard dd > 900 else { return }
+        let tolerance = color == nil ? 70 * 70 : 48 * 48
+        for y in top...bottom {
+            var mask = [Bool](repeating: false, count: x1 - x0 + 1)
+            for x in x0...x1 {
+                let i = (y * width + x) * 4
+                let v = (Int(pixels[i]) - background.0, Int(pixels[i + 1]) - background.1, Int(pixels[i + 2]) - background.2)
+                let t = max(0, min(dd * 6 / 5, v.0 * d.0 + v.1 * d.1 + v.2 * d.2))
+                let r = (v.0 * dd - t * d.0, v.1 * dd - t * d.1, v.2 * dd - t * d.2)
+                // |v − (t/dd)·d|² < tolerance, kept in integers.
+                mask[x - x0] = (r.0 * r.0 + r.1 * r.1 + r.2 * r.2) / dd < tolerance * dd
+            }
+            // Refill each run of ink from the clean pixels either side of it,
+            // so a watermark, gradient or tint under the text continues.
+            var x = 0
+            while x < mask.count {
+                guard mask[x] else { x += 1; continue }
+                var end = x
+                while end + 1 < mask.count && mask[end + 1] { end += 1 }
+                // An edge pixel unlike the paper (a logo, a stamp) is not carried into the gap.
+                func clean(_ c: (Int, Int, Int)) -> (Int, Int, Int) { abs(c.0 - background.0) + abs(c.1 - background.1) + abs(c.2 - background.2) > 90 ? background : c }
+                let leftColour = x > 0 ? clean(pixel(x0 + x - 1, y)) : background, rightColour = end + 1 < mask.count ? clean(pixel(x0 + end + 1, y)) : background
+                for k in x...end {
+                    let f = Double(k - x + 1) / Double(end - x + 2), i = (y * width + x0 + k) * 4
+                    pixels[i] = UInt8(Double(leftColour.0) * (1 - f) + Double(rightColour.0) * f)
+                    pixels[i + 1] = UInt8(Double(leftColour.1) * (1 - f) + Double(rightColour.1) * f)
+                    pixels[i + 2] = UInt8(Double(leftColour.2) * (1 - f) + Double(rightColour.2) * f)
+                }
+                x = end + 1
+            }
+        }
     }
 }
 
