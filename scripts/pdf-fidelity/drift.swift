@@ -13,12 +13,14 @@ import PDFKit
         var worst:Double=0,missing=0,total=0
         for index in pages {
             guard let source=original.page(at:index),let target=roundtrip.page(at:index) else { continue }
-            let lines=(source.selection(for:source.bounds(for:.mediaBox))?.selectionsByLine() ?? [])
+            // Positions are measured from each page's visible (crop) box.
+            let sourceBox=source.bounds(for:.cropBox),targetBox=target.bounds(for:.cropBox)
+            let lines=(source.selection(for:sourceBox)?.selectionsByLine() ?? [])
             for line in lines {
                 guard let text=line.string?.trimmingCharacters(in:.whitespacesAndNewlines),text.count>=4 else { continue }
-                let probe=String(text.prefix(18)),from=line.bounds(for:source)
+                let probe=String(text.prefix(18)),from=line.bounds(for:source).offsetBy(dx:-sourceBox.minX,dy:-sourceBox.minY)
                 total+=1
-                let hits=roundtrip.findString(probe,withOptions:[]).filter{ $0.pages.contains(target) }.map{ $0.bounds(for:target) }
+                let hits=roundtrip.findString(probe,withOptions:[]).filter{ $0.pages.contains(target) }.map{ $0.bounds(for:target).offsetBy(dx:-targetBox.minX,dy:-targetBox.minY) }
                 guard let best=hits.min(by:{ abs($0.midY-from.midY)<abs($1.midY-from.midY) }) else { missing+=1;print(String(format:"p%d  MISSING          %@",index+1,probe));continue }
                 let dy=Double(from.midY-best.midY),dx=Double(best.minX-from.minX)
                 worst=max(worst,abs(dy))

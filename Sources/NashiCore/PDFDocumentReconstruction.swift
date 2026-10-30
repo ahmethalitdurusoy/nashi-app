@@ -381,18 +381,33 @@ enum PDFDocumentReconstruction {
         for index in 0..<pdf.pageCount {
             try token.check()
             guard let page = pdf.page(at: index) else { continue }
-            pages.append((page, page.bounds(for: .mediaBox), try pageText(page, readableOnWhite: !withArtwork, token: token)))
+            // Only what the crop box shows is on the page: text outside it is
+            // hidden in every viewer and would otherwise spill onto new pages.
+            let visible = page.bounds(for: .cropBox)
+            var text = try pageText(page, readableOnWhite: !withArtwork, token: token)
+            text.rows = text.rows.compactMap { row in
+                let cells = row.cells.filter { visible.contains(CGPoint(x: $0.bounds.midX, y: $0.bounds.midY)) }
+                return cells.isEmpty ? nil : Row(cells: cells)
+            }
+            text.ink = text.ink.filter { $0.rect.intersects(visible) }
+            pages.append((page, visible, text))
         }
         let furniture = furniture(pages.map { ($0.box, $0.text.rows) })
         // Content set close to the paper edge (scans, full-bleed letterheads)
         // gets a narrower page margin rather than spilling onto a new page.
-        var reach: [String: (top: CGFloat, bottom: CGFloat)] = [:]
+        var reach: [String: (top: CGFloat, bottom: CGFloat)] = [:], side: [String: CGFloat] = [:]
         for (index, entry) in pages.enumerated() {
             let removed = index < furniture.removed.count ? furniture.removed[index] : []
             let extents = entry.text.rows.enumerated().filter { !removed.contains($0.offset) }.map { extent(.paragraph([$0.element])) }
             guard let highest = extents.map(\.top).max(), let lowest = extents.map(\.bottom).min() else { continue }
             let key = "\(entry.box.width)x\(entry.box.height)", current = reach[key] ?? (.greatestFiniteMagnitude, .greatestFiniteMagnitude)
             reach[key] = (min(current.top, entry.box.maxY - highest), min(current.bottom, lowest - entry.box.minY))
+            // The same for the sides: text near the left or right edge narrows
+            // the side margins instead of being pushed inwards.
+            let kept = entry.text.rows.enumerated().filter { !removed.contains($0.offset) }.map(\.element.bounds)
+            if let leftmost = kept.map(\.minX).min(), let rightmost = kept.map(\.maxX).max() {
+                side[key] = min(side[key] ?? .greatestFiniteMagnitude, leftmost - entry.box.minX, entry.box.maxX - rightmost)
+            }
         }
         var writer = Writer(), body = "", pageLayouts = "", masters = ""
         // One page style per page size: consecutive pages share it, so Word
@@ -406,7 +421,7 @@ enum PDFDocumentReconstruction {
             // A fixed half-inch margin consumes most of a small PDF page.
             // Cap the ordinary margin while reserving at least 90% of a small
             // page's narrow dimension for editable content.
-            let margin = min(36, min(box.width, box.height) * 0.05)
+            let margin = max(0, min(36, min(box.width, box.height) * 0.05, (side["\(box.width)x\(box.height)"] ?? .greatestFiniteMagnitude) - 1))
             let removed = index < furniture.removed.count ? furniture.removed[index] : []
             let rows = text.rows.enumerated().filter { !removed.contains($0.offset) }.map(\.element)
             // Side-by-side items are separate blocks so the layout pass can
@@ -858,7 +873,7 @@ enum PDFDocumentReconstruction {
     // MARK: Text
 
     private static func pageText(_ page: PDFPage, readableOnWhite: Bool, token: CancellationToken) throws -> PageText {
-        let box = page.bounds(for: .mediaBox)
+        let box = page.bounds(for: .cropBox)
         let placed = try PDFPlacedImages.regions(page, token: token)
         let photographic = placed.contains { $0.width * $0.height > box.width * box.height * 0.04 }
         guard let attributed = page.attributedString, attributed.length > 0,
@@ -1273,7 +1288,7 @@ enum PDFDocumentReconstruction {
         let image: CGImage? = pixels.withUnsafeMutableBytes { raw -> CGImage? in
             guard let context = CGContext(data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
             context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            let transform = cgPage.getDrawingTransform(.mediaBox, rect: CGRect(origin: .zero, size: bounds.size), rotate: 0, preserveAspectRatio: true)
+            let transform = cgPage.getDrawingTransform(.cropBox, rect: CGRect(origin: .zero, size: bounds.size), rotate: 0, preserveAspectRatio: true)
             context.scaleBy(x: scale, y: scale); context.concatenate(transform); context.drawPDFPage(cgPage)
             let toPixels = transform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
             let buffer = raw.bindMemory(to: UInt8.self)
@@ -1642,7 +1657,7 @@ enum PDFPlacedImages {
         let scanner = Scanner(content: content, resources: resources, transform: .identity, token: token, depth: 0)
         scanner.scan()
         try token.check()
-        let pageBounds = page.bounds(for: .mediaBox)
+        let pageBounds = page.bounds(for: .cropBox)
         var result: [CGRect] = []
         for rect in scanner.images {
             let clipped = rect.intersection(pageBounds)

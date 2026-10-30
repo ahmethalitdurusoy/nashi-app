@@ -7,7 +7,7 @@ import PDFKit
 // Score: share of 8×8-pixel tiles (at 600 px width, on a 4-bit grey scale)
 // whose mean ink differs by less than 12%. 100 = visually identical layout.
 func render(_ page:PDFPage,width:Int)->CGImage {
-    let box=page.bounds(for:.mediaBox),scale=CGFloat(width)/box.width,height=Int(box.height*scale)
+    let box=page.bounds(for:.cropBox),scale=CGFloat(width)/box.width,height=Int(box.height*scale)
     let context=CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.noneSkipLast.rawValue)!
     context.setFillColor(gray:1,alpha:1);context.fill(CGRect(x:0,y:0,width:width,height:height))
     context.scaleBy(x:scale,y:scale);context.translateBy(x:-box.minX,y:-box.minY);context.drawPDFPage(page.pageRef!)
