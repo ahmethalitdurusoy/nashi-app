@@ -362,6 +362,7 @@
 "CHOOSE VALID PDF PAGES." = "CHOOSE VALID PDF PAGES.";
 "CHOOSE VIDEO, AUDIO, THUMBNAIL OR IMAGES." = "CHOOSE VIDEO, AUDIO, THUMBNAIL OR IMAGES.";
 "CHOOSE VISUALIZATION IMAGE…" = "CHOOSE VISUALIZATION IMAGE…";
+"CHOOSE WHAT EACH WHEEL SHOWS. UNCHECKED ITEMS ARE HIDDEN; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING." = "CHOOSE WHAT EACH WHEEL SHOWS. UNCHECKED ITEMS ARE HIDDEN; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING.";
 "CHOOSE WHAT YOUR FILE SHARES." = "CHOOSE WHAT YOUR FILE SHARES.";
 "CHOOSE ZIP, TAR OR GZIP." = "CHOOSE ZIP, TAR OR GZIP.";
 "CLARITY" = "CLARITY";
@@ -520,6 +521,7 @@
 "Choose valid image dimensions." = "Choose valid image dimensions.";
 "Choose video, audio, thumbnail or images." = "Choose video, audio, thumbnail or images.";
 "Choose visualization image…" = "Choose visualization image…";
+"Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything." = "Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything.";
 "Choose what your file shares." = "Choose what your file shares.";
 "Clarity" = "Clarity";
 "Clear" = "Clear";
@@ -616,6 +618,7 @@
 "DISMISS" = "DISMISS";
 "DOCUMENT XML IS TOO LARGE." = "DOCUMENT XML IS TOO LARGE.";
 "DOCUMENTS" = "DOCUMENTS";
+"DOCUMENTS AND OTHER" = "DOCUMENTS AND OTHER";
 "DONE" = "DONE";
 "DOWNLOAD" = "DOWNLOAD";
 "DOWNLOAD A LINK" = "DOWNLOAD A LINK";
@@ -684,6 +687,7 @@
 "Dismiss" = "Dismiss";
 "Document XML is too large." = "Document XML is too large.";
 "Documents" = "Documents";
+"Documents and other" = "Documents and other";
 "Done" = "Done";
 "Download" = "Download";
 "Download Audio" = "Download Audio";
@@ -1692,6 +1696,7 @@
 "SHARPEN" = "SHARPEN";
 "SHARPNESS" = "SHARPNESS";
 "SHIFT LOCKS THE RATIO · RETURN CROPS\nDRAG INSIDE TO MOVE; DRAG A HANDLE TO RESIZE." = "SHIFT LOCKS THE RATIO · RETURN CROPS\nDRAG INSIDE TO MOVE; DRAG A HANDLE TO RESIZE.";
+"SHOW ALL" = "SHOW ALL";
 "SHOW IN EXPLORER" = "SHOW IN EXPLORER";
 "SHOW IN FINDER" = "SHOW IN FINDER";
 "SHOW ORIGINAL" = "SHOW ORIGINAL";
@@ -1831,9 +1836,14 @@
 "Shift locks the ratio · Return crops\nDrag inside to move; drag a handle to resize." = "Shift locks the ratio · Return crops\nDrag inside to move; drag a handle to resize.";
 "Show Original" = "Show Original";
 "Show UForge in Finder" = "Show UForge in Finder";
+"Show all" = "Show all";
 "Show in Explorer" = "Show in Explorer";
 "Show in Finder" = "Show in Finder";
 "Show original" = "Show original";
+"Shown: %@ / %@" = "Shown: %@ / %@";
+"Shown: %@ / %lld" = "Shown: %@ / %lld";
+"Shown: %lld / %@" = "Shown: %lld / %@";
+"Shown: %lld / %lld" = "Shown: %lld / %lld";
 "Silence threshold" = "Silence threshold";
 "Skip tour" = "Skip tour";
 "Slides" = "Slides";
@@ -2155,8 +2165,10 @@
 "WAVEFORM" = "WAVEFORM";
 "WELCOME TO UFORGE" = "WELCOME TO UFORGE";
 "WELCOME…" = "WELCOME…";
+"WHEEL CONTENTS" = "WHEEL CONTENTS";
 "WHEEL FINISH" = "WHEEL FINISH";
 "WHEEL SIZE" = "WHEEL SIZE";
+"WHEELS" = "WHEELS";
 "WHITES" = "WHITES";
 "WIDTH" = "WIDTH";
 "WINDOW" = "WINDOW";
@@ -2170,8 +2182,10 @@
 "Waveform" = "Waveform";
 "Welcome to UForge" = "Welcome to UForge";
 "Welcome…" = "Welcome…";
+"Wheel contents" = "Wheel contents";
 "Wheel finish" = "Wheel finish";
 "Wheel size" = "Wheel size";
+"Wheels" = "Wheels";
 "Whites" = "Whites";
 "Width" = "Width";
 "Window" = "Window";

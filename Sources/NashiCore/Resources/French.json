@@ -1128,5 +1128,11 @@
   "Note": "Note",
   "Save downloaded media to…": "Enregistrer les médias téléchargés dans…",
   "Original image · ready to download": "Image originale · prête à télécharger",
-  "YouTube thumbnail · best available full-size image": "Miniature YouTube · meilleure image en taille réelle disponible"
+  "YouTube thumbnail · best available full-size image": "Miniature YouTube · meilleure image en taille réelle disponible",
+  "Wheels": "Roues",
+  "Wheel contents": "Contenu des roues",
+  "Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything.": "Choisissez ce que chaque roue affiche. Les éléments décochés sont masqués ; s’il ne reste rien pour un fichier, la roue affiche tout.",
+  "Shown: {0} / {1}": "Affichés : {0} / {1}",
+  "Show all": "Tout afficher",
+  "Documents and other": "Documents et autres"
 }

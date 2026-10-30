@@ -362,6 +362,7 @@
 "CHOOSE VALID PDF PAGES." = "CHOISISSEZ DES PAGES PDF VALIDES.";
 "CHOOSE VIDEO, AUDIO, THUMBNAIL OR IMAGES." = "CHOISISSEZ UNE VIDÉO, UN AUDIO, UNE MINIATURE OU DES IMAGES.";
 "CHOOSE VISUALIZATION IMAGE…" = "CHOISIR L’IMAGE DE VISUALISATION…";
+"CHOOSE WHAT EACH WHEEL SHOWS. UNCHECKED ITEMS ARE HIDDEN; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING." = "CHOISISSEZ CE QUE CHAQUE ROUE AFFICHE. LES ÉLÉMENTS DÉCOCHÉS SONT MASQUÉS ; S’IL NE RESTE RIEN POUR UN FICHIER, LA ROUE AFFICHE TOUT.";
 "CHOOSE WHAT YOUR FILE SHARES." = "CHOISISSEZ CE QUE VOTRE FICHIER PARTAGE.";
 "CHOOSE ZIP, TAR OR GZIP." = "CHOISISSEZ ZIP, TAR OU GZIP.";
 "CLARITY" = "CLARTÉ";
@@ -520,6 +521,7 @@
 "Choose valid image dimensions." = "Choisissez des dimensions d’image valides.";
 "Choose video, audio, thumbnail or images." = "Choisissez une vidéo, un audio, une miniature ou des images.";
 "Choose visualization image…" = "Choisir l’image de visualisation…";
+"Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything." = "Choisissez ce que chaque roue affiche. Les éléments décochés sont masqués ; s’il ne reste rien pour un fichier, la roue affiche tout.";
 "Choose what your file shares." = "Choisissez ce que votre fichier partage.";
 "Clarity" = "Clarté";
 "Clear" = "Effacer";
@@ -616,6 +618,7 @@
 "DISMISS" = "FERMER";
 "DOCUMENT XML IS TOO LARGE." = "LE XML DU DOCUMENT EST TROP VOLUMINEUX.";
 "DOCUMENTS" = "DOCUMENTS";
+"DOCUMENTS AND OTHER" = "DOCUMENTS ET AUTRES";
 "DONE" = "TERMINÉ";
 "DOWNLOAD" = "TÉLÉCHARGER";
 "DOWNLOAD A LINK" = "TÉLÉCHARGER UN LIEN";
@@ -684,6 +687,7 @@
 "Dismiss" = "Fermer";
 "Document XML is too large." = "Le XML du document est trop volumineux.";
 "Documents" = "Documents";
+"Documents and other" = "Documents et autres";
 "Done" = "Terminé";
 "Download" = "Télécharger";
 "Download Audio" = "Télécharger l’audio";
@@ -1692,6 +1696,7 @@
 "SHARPEN" = "ACCENTUER";
 "SHARPNESS" = "NETTETÉ";
 "SHIFT LOCKS THE RATIO · RETURN CROPS\nDRAG INSIDE TO MOVE; DRAG A HANDLE TO RESIZE." = "MAJ VERROUILLE LES PROPORTIONS · RETOUR RECADRE\nFAITES GLISSER À L’INTÉRIEUR POUR DÉPLACER ; FAITES GLISSER UNE POIGNÉE POUR REDIMENSIONNER.";
+"SHOW ALL" = "TOUT AFFICHER";
 "SHOW IN EXPLORER" = "AFFICHER DANS L’EXPLORATEUR";
 "SHOW IN FINDER" = "AFFICHER DANS LE FINDER";
 "SHOW ORIGINAL" = "AFFICHER L’ORIGINAL";
@@ -1831,9 +1836,14 @@
 "Shift locks the ratio · Return crops\nDrag inside to move; drag a handle to resize." = "Maj verrouille les proportions · Retour recadre\nFaites glisser à l’intérieur pour déplacer ; faites glisser une poignée pour redimensionner.";
 "Show Original" = "Afficher l’original";
 "Show UForge in Finder" = "Afficher UForge dans le Finder";
+"Show all" = "Tout afficher";
 "Show in Explorer" = "Afficher dans l’Explorateur";
 "Show in Finder" = "Afficher dans le Finder";
 "Show original" = "Afficher l’original";
+"Shown: %@ / %@" = "Affichés : %@ / %@";
+"Shown: %@ / %lld" = "Affichés : %@ / %lld";
+"Shown: %lld / %@" = "Affichés : %lld / %@";
+"Shown: %lld / %lld" = "Affichés : %lld / %lld";
 "Silence threshold" = "Seuil de silence";
 "Skip tour" = "Passer la visite";
 "Slides" = "Diapositives";
@@ -2155,8 +2165,10 @@
 "WAVEFORM" = "FORME D’ONDE";
 "WELCOME TO UFORGE" = "BIENVENUE DANS UFORGE";
 "WELCOME…" = "BIENVENUE…";
+"WHEEL CONTENTS" = "CONTENU DES ROUES";
 "WHEEL FINISH" = "FINITION DE LA ROUE";
 "WHEEL SIZE" = "TAILLE DE LA ROUE";
+"WHEELS" = "ROUES";
 "WHITES" = "BLANCS";
 "WIDTH" = "LARGEUR";
 "WINDOW" = "FENÊTRE";
@@ -2170,8 +2182,10 @@
 "Waveform" = "Forme d’onde";
 "Welcome to UForge" = "Bienvenue dans UForge";
 "Welcome…" = "Bienvenue…";
+"Wheel contents" = "Contenu des roues";
 "Wheel finish" = "Finition de la roue";
 "Wheel size" = "Taille de la roue";
+"Wheels" = "Roues";
 "Whites" = "Blancs";
 "Width" = "Largeur";
 "Window" = "Fenêtre";

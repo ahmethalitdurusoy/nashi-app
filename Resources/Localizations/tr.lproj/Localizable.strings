@@ -362,6 +362,7 @@
 "CHOOSE VALID PDF PAGES." = "GEÇERLİ PDF SAYFALARI SEÇ.";
 "CHOOSE VIDEO, AUDIO, THUMBNAIL OR IMAGES." = "VİDEO, SES, KÜÇÜK RESİM VEYA GÖRSEL SEÇ.";
 "CHOOSE VISUALIZATION IMAGE…" = "GÖRSELLEŞTİRME GÖRSELİ SEÇ…";
+"CHOOSE WHAT EACH WHEEL SHOWS. UNCHECKED ITEMS ARE HIDDEN; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING." = "HER ÇARKTA NEYİN GÖRÜNECEĞİNİ SEÇ. İŞARETİNİ KALDIRDIKLARIN GİZLENİR; BİR DOSYA İÇİN HİÇBİR ŞEY KALMAZSA ÇARK HEPSİNİ GÖSTERİR.";
 "CHOOSE WHAT YOUR FILE SHARES." = "DOSYANIN NE PAYLAŞTIĞINI SEN SEÇ.";
 "CHOOSE ZIP, TAR OR GZIP." = "ZIP, TAR VEYA GZIP SEÇ.";
 "CLARITY" = "NETLİK";
@@ -520,6 +521,7 @@
 "Choose valid image dimensions." = "Geçerli görsel boyutları seç.";
 "Choose video, audio, thumbnail or images." = "Video, ses, küçük resim veya görsel seç.";
 "Choose visualization image…" = "Görselleştirme görseli seç…";
+"Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything." = "Her çarkta neyin görüneceğini seç. İşaretini kaldırdıkların gizlenir; bir dosya için hiçbir şey kalmazsa çark hepsini gösterir.";
 "Choose what your file shares." = "Dosyanın ne paylaştığını sen seç.";
 "Clarity" = "Netlik";
 "Clear" = "Temizle";
@@ -616,6 +618,7 @@
 "DISMISS" = "KAPAT";
 "DOCUMENT XML IS TOO LARGE." = "BELGE XML'İ ÇOK BÜYÜK.";
 "DOCUMENTS" = "BELGELER";
+"DOCUMENTS AND OTHER" = "BELGELER VE DİĞERLERİ";
 "DONE" = "BİTTİ";
 "DOWNLOAD" = "İNDİR";
 "DOWNLOAD A LINK" = "BAĞLANTIDAN İNDİR";
@@ -684,6 +687,7 @@
 "Dismiss" = "Kapat";
 "Document XML is too large." = "Belge XML'i çok büyük.";
 "Documents" = "Belgeler";
+"Documents and other" = "Belgeler ve diğerleri";
 "Done" = "Bitti";
 "Download" = "İndir";
 "Download Audio" = "Sesi İndir";
@@ -1692,6 +1696,7 @@
 "SHARPEN" = "KESKİNLEŞTİRME";
 "SHARPNESS" = "KESKİNLİK";
 "SHIFT LOCKS THE RATIO · RETURN CROPS\nDRAG INSIDE TO MOVE; DRAG A HANDLE TO RESIZE." = "SHIFT ORANI KİLİTLER · ENTER KIRPAR\nTAŞIMAK İÇİN ALANIN İÇİNİ, BOYUTLANDIRMAK İÇİN TUTAMAĞI SÜRÜKLE.";
+"SHOW ALL" = "TÜMÜNÜ GÖSTER";
 "SHOW IN EXPLORER" = "DOSYA GEZGİNİ'NDE GÖSTER";
 "SHOW IN FINDER" = "FINDER'DA GÖSTER";
 "SHOW ORIGINAL" = "ORİJİNALİ GÖSTER";
@@ -1831,9 +1836,14 @@
 "Shift locks the ratio · Return crops\nDrag inside to move; drag a handle to resize." = "Shift oranı kilitler · Enter kırpar\nTaşımak için alanın içini, boyutlandırmak için tutamağı sürükle.";
 "Show Original" = "Orijinali Göster";
 "Show UForge in Finder" = "UForge'u Finder'da Göster";
+"Show all" = "Tümünü göster";
 "Show in Explorer" = "Dosya Gezgini'nde Göster";
 "Show in Finder" = "Finder'da Göster";
 "Show original" = "Orijinali göster";
+"Shown: %@ / %@" = "Gösterilen: %@ / %@";
+"Shown: %@ / %lld" = "Gösterilen: %@ / %lld";
+"Shown: %lld / %@" = "Gösterilen: %lld / %@";
+"Shown: %lld / %lld" = "Gösterilen: %lld / %lld";
 "Silence threshold" = "Sessizlik eşiği";
 "Skip tour" = "Turu geç";
 "Slides" = "Sunumlar";
@@ -2155,8 +2165,10 @@
 "WAVEFORM" = "DALGA BİÇİMİ";
 "WELCOME TO UFORGE" = "UFORGE'A HOŞ GELDİN";
 "WELCOME…" = "HOŞ GELDİN…";
+"WHEEL CONTENTS" = "ÇARK İÇERİĞİ";
 "WHEEL FINISH" = "ÇARK GÖRÜNÜMÜ";
 "WHEEL SIZE" = "ÇARK BOYUTU";
+"WHEELS" = "ÇARKLAR";
 "WHITES" = "BEYAZLAR";
 "WIDTH" = "GENİŞLİK";
 "WINDOW" = "PENCERE";
@@ -2170,8 +2182,10 @@
 "Waveform" = "Dalga biçimi";
 "Welcome to UForge" = "UForge'a Hoş Geldin";
 "Welcome…" = "Hoş Geldin…";
+"Wheel contents" = "Çark içeriği";
 "Wheel finish" = "Çark görünümü";
 "Wheel size" = "Çark boyutu";
+"Wheels" = "Çarklar";
 "Whites" = "Beyazlar";
 "Width" = "Genişlik";
 "Window" = "Pencere";
