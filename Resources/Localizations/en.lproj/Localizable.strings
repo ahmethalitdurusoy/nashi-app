@@ -251,6 +251,7 @@
 "BOTTOM" = "BOTTOM";
 "BRIGHTNESS" = "BRIGHTNESS";
 "BUILT FOR YOUR FILES. MADE FOR YOUR MAC." = "BUILT FOR YOUR FILES. MADE FOR YOUR MAC.";
+"BY DEFAULT EVERY WHEEL SHOWS EVERYTHING. UNCHECK ITEMS TO HIDE THEM; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING." = "BY DEFAULT EVERY WHEEL SHOWS EVERYTHING. UNCHECK ITEMS TO HIDE THEM; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING.";
 "Back" = "Back";
 "Background" = "Background";
 "Background Image…" = "Background Image…";
@@ -270,6 +271,7 @@
 "Bottom" = "Bottom";
 "Brightness" = "Brightness";
 "Built for your files. Made for your Mac." = "Built for your files. Made for your Mac.";
+"By default every wheel shows everything. Uncheck items to hide them; if nothing is left for a file, the wheel shows everything." = "By default every wheel shows everything. Uncheck items to hide them; if nothing is left for a file, the wheel shows everything.";
 "CALLOUT" = "CALLOUT";
 "CANCEL" = "CANCEL";
 "CANCEL DOWNLOAD" = "CANCEL DOWNLOAD";
@@ -362,7 +364,6 @@
 "CHOOSE VALID PDF PAGES." = "CHOOSE VALID PDF PAGES.";
 "CHOOSE VIDEO, AUDIO, THUMBNAIL OR IMAGES." = "CHOOSE VIDEO, AUDIO, THUMBNAIL OR IMAGES.";
 "CHOOSE VISUALIZATION IMAGE…" = "CHOOSE VISUALIZATION IMAGE…";
-"CHOOSE WHAT EACH WHEEL SHOWS. UNCHECKED ITEMS ARE HIDDEN; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING." = "CHOOSE WHAT EACH WHEEL SHOWS. UNCHECKED ITEMS ARE HIDDEN; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING.";
 "CHOOSE WHAT YOUR FILE SHARES." = "CHOOSE WHAT YOUR FILE SHARES.";
 "CHOOSE ZIP, TAR OR GZIP." = "CHOOSE ZIP, TAR OR GZIP.";
 "CLARITY" = "CLARITY";
@@ -521,7 +522,6 @@
 "Choose valid image dimensions." = "Choose valid image dimensions.";
 "Choose video, audio, thumbnail or images." = "Choose video, audio, thumbnail or images.";
 "Choose visualization image…" = "Choose visualization image…";
-"Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything." = "Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything.";
 "Choose what your file shares." = "Choose what your file shares.";
 "Clarity" = "Clarity";
 "Clear" = "Clear";

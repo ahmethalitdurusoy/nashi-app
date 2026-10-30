@@ -1131,7 +1131,7 @@
   "YouTube thumbnail · best available full-size image": "YouTube küçük resmi · en iyi tam boyutlu görsel",
   "Wheels": "Çarklar",
   "Wheel contents": "Çark içeriği",
-  "Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything.": "Her çarkta neyin görüneceğini seç. İşaretini kaldırdıkların gizlenir; bir dosya için hiçbir şey kalmazsa çark hepsini gösterir.",
+  "By default every wheel shows everything. Uncheck items to hide them; if nothing is left for a file, the wheel shows everything.": "Varsayılan olarak her çark tüm dilimleri gösterir. İstemediklerinin işaretini kaldırarak gizleyebilirsin; bir dosya için hiçbir şey kalmazsa çark hepsini gösterir.",
   "Shown: {0} / {1}": "Gösterilen: {0} / {1}",
   "Show all": "Tümünü göster",
   "Documents and other": "Belgeler ve diğerleri"

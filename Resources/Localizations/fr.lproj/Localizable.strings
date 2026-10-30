@@ -251,6 +251,7 @@
 "BOTTOM" = "BAS";
 "BRIGHTNESS" = "LUMINOSITÉ";
 "BUILT FOR YOUR FILES. MADE FOR YOUR MAC." = "CONÇU POUR VOS FICHIERS. FAIT POUR VOTRE MAC.";
+"BY DEFAULT EVERY WHEEL SHOWS EVERYTHING. UNCHECK ITEMS TO HIDE THEM; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING." = "PAR DÉFAUT, CHAQUE ROUE AFFICHE TOUT. DÉCOCHEZ DES ÉLÉMENTS POUR LES MASQUER ; S’IL NE RESTE RIEN POUR UN FICHIER, LA ROUE AFFICHE TOUT.";
 "Back" = "Retour";
 "Background" = "Arrière-plan";
 "Background Image…" = "Image d’arrière-plan…";
@@ -270,6 +271,7 @@
 "Bottom" = "Bas";
 "Brightness" = "Luminosité";
 "Built for your files. Made for your Mac." = "Conçu pour vos fichiers. Fait pour votre Mac.";
+"By default every wheel shows everything. Uncheck items to hide them; if nothing is left for a file, the wheel shows everything." = "Par défaut, chaque roue affiche tout. Décochez des éléments pour les masquer ; s’il ne reste rien pour un fichier, la roue affiche tout.";
 "CALLOUT" = "LÉGENDE";
 "CANCEL" = "ANNULER";
 "CANCEL DOWNLOAD" = "ANNULER LE TÉLÉCHARGEMENT";
@@ -362,7 +364,6 @@
 "CHOOSE VALID PDF PAGES." = "CHOISISSEZ DES PAGES PDF VALIDES.";
 "CHOOSE VIDEO, AUDIO, THUMBNAIL OR IMAGES." = "CHOISISSEZ UNE VIDÉO, UN AUDIO, UNE MINIATURE OU DES IMAGES.";
 "CHOOSE VISUALIZATION IMAGE…" = "CHOISIR L’IMAGE DE VISUALISATION…";
-"CHOOSE WHAT EACH WHEEL SHOWS. UNCHECKED ITEMS ARE HIDDEN; IF NOTHING IS LEFT FOR A FILE, THE WHEEL SHOWS EVERYTHING." = "CHOISISSEZ CE QUE CHAQUE ROUE AFFICHE. LES ÉLÉMENTS DÉCOCHÉS SONT MASQUÉS ; S’IL NE RESTE RIEN POUR UN FICHIER, LA ROUE AFFICHE TOUT.";
 "CHOOSE WHAT YOUR FILE SHARES." = "CHOISISSEZ CE QUE VOTRE FICHIER PARTAGE.";
 "CHOOSE ZIP, TAR OR GZIP." = "CHOISISSEZ ZIP, TAR OU GZIP.";
 "CLARITY" = "CLARTÉ";
@@ -521,7 +522,6 @@
 "Choose valid image dimensions." = "Choisissez des dimensions d’image valides.";
 "Choose video, audio, thumbnail or images." = "Choisissez une vidéo, un audio, une miniature ou des images.";
 "Choose visualization image…" = "Choisir l’image de visualisation…";
-"Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything." = "Choisissez ce que chaque roue affiche. Les éléments décochés sont masqués ; s’il ne reste rien pour un fichier, la roue affiche tout.";
 "Choose what your file shares." = "Choisissez ce que votre fichier partage.";
 "Clarity" = "Clarté";
 "Clear" = "Effacer";

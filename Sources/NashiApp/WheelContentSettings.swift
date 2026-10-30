@@ -50,7 +50,7 @@ struct WheelContentSettingsView:View {
             VStack(alignment:.leading,spacing:18) {
                 VStack(alignment:.leading,spacing:6) {
                     Text("Wheel contents").font(.system(size:24,weight:.bold,design:.rounded))
-                    Text("Choose what each wheel shows. Unchecked items are hidden; if nothing is left for a file, the wheel shows everything.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                    Text("By default every wheel shows everything. Uncheck items to hide them; if nothing is left for a file, the wheel shows everything.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                 }
                 Picker("",selection:$mode) {
                     LText("Conversion wheel").tag(WheelMode.convert)
@@ -60,7 +60,7 @@ struct WheelContentSettingsView:View {
                 HStack {
                     Text("Shown: \(all.filter{!hidden.contains($0.id)}.count) / \(all.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Show all") { update([]) }.disabled(hidden.isEmpty)
+                    Button("Restore Defaults") { update([]) }.disabled(hidden.isEmpty)
                 }
                 ForEach(groups) { group in
                     GroupBox {
