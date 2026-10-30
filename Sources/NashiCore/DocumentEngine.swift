@@ -75,6 +75,12 @@ public enum DocumentEngine {
             }
         }
 
+        // Workbooks are printed with a page setup of their own when they have
+        // none: all columns on one page width, the header row on every page.
+        if ["pdf", "png", "jpg"].contains(format), ["xlsx", "xlsm", "xls", "csv", "tsv"].contains(ext) {
+            source = try SpreadsheetPrintSetup.prepare(source, in: work.appendingPathComponent("Print", isDirectory: true), token: token)
+        }
+
         if format == "epub" && options.epubLayout == "fixed" {
             let pdf = try office(source, to: "pdf", in: staging, token: token)
             let epub = work.appendingPathComponent("Fixed book.epub")
