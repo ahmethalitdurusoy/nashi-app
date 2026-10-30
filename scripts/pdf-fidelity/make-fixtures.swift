@@ -303,6 +303,64 @@ let lorem=["Bu rapor, 2026 yılının üçüncü çeyreğine ait operasyonel son
     w.endPage();w.close()
 }
 
+/// Bank transfer receipt: boxed sections, an orange title band, label/value
+/// rows on alternating shading, values wrapping inside their cell (IBAN,
+/// payee name) next to vertically centred labels, and justified, centred
+/// and bold-label text. Data is fictitious.
+@MainActor func receipt(_ url:URL) {
+    let w=PDFWriter(url:url,pages:1)
+    w.beginPage()
+    w.logo(at:CGPoint(x:62,y:46),size:24)
+    w.text("ÖrnekBank",at:CGPoint(x:92,y:48),width:200,font:bodyFont(bold:true,size:17))
+    w.rect(CGRect(x:410,y:46,width:126,height:22),fill:NSColor(white:0.15,alpha:1),radius:3)
+    w.text("Şubesiz Bankacılık",at:CGPoint(x:410,y:51),width:126,font:bodyFont(bold:true,size:9),color:gold,align:.center)
+    let grey=NSColor(white:0.955,alpha:1),line=NSColor(white:0.85,alpha:1),orange=NSColor(srgbRed:0.98,green:0.70,blue:0.10,alpha:1)
+    let left:CGFloat=58,width:CGFloat=476
+    // Section 1: details table
+    w.rect(CGRect(x:left-4,y:96,width:width+8,height:236),stroke:line,width:0.8)
+    w.rect(CGRect(x:left,y:100,width:width,height:16),fill:orange)
+    w.text("ÖRNEKBANK",at:CGPoint(x:left,y:103),width:width,font:bodyFont(bold:true,size:8.5),align:.center)
+    var y:CGFloat=116
+    let columns:[CGFloat]=[left+6,left+126,left+244,left+364]
+    let rows:[(String,[String],String,[String],CGFloat)]=[
+        ("İŞLEM",["Hesaptan Havale"],"İŞLEM TARİHİ",["30.10.2026 14:12:09"],22),
+        ("ALICI HESAP NO",["TR12 0006 4000 0011 2345","6789 01"],"ALICI AD SOYAD/UNVAN",["ÖRNEK ÜNİVERSİTESİ","SPOR BİLİMLERİ","FAKÜLTESİ DÖNER","SERMAYE","İŞLETMESİ"],62),
+        ("GONDEREN HESAP NO",["TR98 0006 4000 0019 8765","4321 55"],"GONDEREN AD\nSOYAD/UNVAN",["AYŞE YILMAZ"],34),
+        ("İŞLEM TUTARI",["300,00 TL"],"MASRAF TUTARI",[],22),
+        ("İŞLEM NO",["2026001234567890"],"FİŞ NO",[],22)]
+    w.rect(CGRect(x:left,y:y,width:width,height:20),fill:grey)
+    w.text("İŞLEM BİLGİLERİ",at:CGPoint(x:left+6,y:y+6),width:200,font:bodyFont(bold:true,size:8))
+    y+=20
+    for (index,row) in rows.enumerated() {
+        if index%2==1 { w.rect(CGRect(x:left,y:y,width:width,height:row.4),fill:grey) }
+        func cell(_ lines:[String],x:CGFloat,bold:Bool) {
+            let height=CGFloat(lines.count)*10.4
+            for (n,text) in lines.enumerated() { w.text(text,at:CGPoint(x:x,y:y+(row.4-height)/2+CGFloat(n)*10.4),width:118,font:bodyFont(bold:bold,size:8),lineSpacing:0) }
+        }
+        cell([row.0],x:columns[0],bold:true);cell(row.1,x:columns[1],bold:false)
+        cell(row.2.components(separatedBy:"\n"),x:columns[2],bold:true);cell(row.3,x:columns[3],bold:false)
+        y+=row.4
+    }
+    // Section 2: description
+    y+=14;w.rect(CGRect(x:left-4,y:y,width:width+8,height:78),stroke:line,width:0.8)
+    w.rect(CGRect(x:left,y:y+4,width:width,height:20),fill:grey)
+    w.text("İŞLEM AÇIKLAMASI",at:CGPoint(x:left+6,y:y+10),width:200,font:bodyFont(bold:true,size:8))
+    w.text("Yukarıda Detay Bilgileri Verilen Havale İşlemi Gerçekleştirilmiştir./ Örnek Kişi Koordinasyon Parkuru Tanıtım, Bilgilendirme ve Uygulama",at:CGPoint(x:left+6,y:y+44),width:width-12,font:bodyFont(size:8),lineSpacing:1)
+    // Section 3: bold labels on one shaded band
+    y+=92;w.rect(CGRect(x:left-4,y:y,width:width+8,height:64),stroke:line,width:0.8)
+    w.rect(CGRect(x:left,y:y+4,width:width,height:56),fill:grey)
+    for (n,(label,value)) in [("Sicil Numarası:","776444"),("Ticaret Ünvanı:","Örnek Bankası T.A.O"),("Ticaret Merkezi Adresi:","Saray Mahallesi Örnek Caddesi No:7/A-B Ümraniye/İSTANBUL"),("İnternet Sitesi Adresi:","www.ornekbank.com.tr")].enumerated() {
+        let attributed=NSMutableAttributedString(string:label+" ",attributes:[.font:bodyFont(bold:true,size:8),.foregroundColor:ink])
+        attributed.append(NSAttributedString(string:value,attributes:[.font:bodyFont(size:8),.foregroundColor:ink]))
+        attributed.draw(at:CGPoint(x:left+6,y:y+10+CGFloat(n)*10.6))
+    }
+    // Section 4: centred disclaimer
+    y+=78;w.rect(CGRect(x:left-4,y:y,width:width+8,height:44),stroke:line,width:0.8)
+    w.rect(CGRect(x:left,y:y+4,width:width,height:36),fill:grey)
+    w.text("Bu dekont bilgilendirme amaçlı hazırlanmıştır. Dekont üzerinde herhangi bir değişiklik yapılması ve/veya bu dekont üzerindeki bilgiler ile banka kayıtlarının uyuşmaması halinde banka kayıtları esas alınacaktır.",at:CGPoint(x:left+20,y:y+12),width:width-40,font:bodyFont(size:8),align:.center,lineSpacing:1)
+    w.endPage();w.close()
+}
+
 /// Image-only pages that look like a flatbed scan: slight skew, paper tint and speckle noise.
 @MainActor func scanned(from sources:[URL],pages:[(Int,Int)],to url:URL) {
     var box=CGRect(origin:.zero,size:pageSize)
@@ -349,8 +407,8 @@ let lorem=["Bu rapor, 2026 yılının üçüncü çeyreğine ait operasyonel son
     @MainActor static func main() {
         let out=URL(fileURLWithPath:CommandLine.arguments.count>1 ? CommandLine.arguments[1]:"fixtures",isDirectory:true)
         try? FileManager.default.createDirectory(at:out,withIntermediateDirectories:true)
-        let names=["01-rapor.pdf","02-sozlesme.pdf","03-fatura.pdf","04-taranmis.pdf","05-karma.pdf"].map{out.appendingPathComponent($0)}
-        report(names[0]);contract(names[1]);invoice(names[2])
+        let names=["01-rapor.pdf","02-sozlesme.pdf","03-fatura.pdf","04-taranmis.pdf","05-karma.pdf","06-dekont.pdf"].map{out.appendingPathComponent($0)}
+        report(names[0]);contract(names[1]);invoice(names[2]);receipt(names[5])
         scanned(from:[names[1],names[2]],pages:[(0,1),(1,0)],to:names[3])
         mixed(names[4],scanSource:names[0])
         for url in names { print(url.path,PDFDocument(url:url)?.pageCount ?? 0) }

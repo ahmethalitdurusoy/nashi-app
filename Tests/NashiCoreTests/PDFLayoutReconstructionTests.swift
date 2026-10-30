@@ -154,6 +154,39 @@ final class PDFLayoutReconstructionTests: XCTestCase {
         XCTAssertNotEqual(try XCTUnwrap(paragraph(containing: "Numaralı madde")), try XCTUnwrap(paragraph(containing: "İkinci numaralı madde")))
     }
 
+    /// Receipt rows: a value wrapping inside its cell beside a vertically
+    /// centred label. PDFKit can report both as one line; the digits must
+    /// still come out whole, in order, and in one cell.
+    func testWrappedCellValuesKeepTheirDigitsInOrder() throws {
+        let document = try pdf("Receipt", pages: 1) { _ in
+            let shade = NSColor(white: 0.95, alpha: 1)
+            for (index, top) in [CGFloat(200), 230, 290].enumerated() where index % 2 == 1 { shade.setFill(); CGRect(x: 58, y: top, width: 476, height: 60).fill() }
+            self.text("İŞLEM", at: CGPoint(x: 64, y: 210), size: 8, bold: true)
+            self.text("Hesaptan Havale", at: CGPoint(x: 184, y: 210), size: 8)
+            self.text("İŞLEM TARİHİ", at: CGPoint(x: 302, y: 210), size: 8, bold: true)
+            self.text("30.10.2026 14:12:09", at: CGPoint(x: 422, y: 210), size: 8)
+            self.text("ALICI HESAP NO", at: CGPoint(x: 64, y: 255), size: 8, bold: true)
+            self.text("TR12 0006 4000 0011 2345", at: CGPoint(x: 184, y: 250), size: 8)
+            self.text("6789 01", at: CGPoint(x: 184, y: 260.4), size: 8)
+            self.text("ALICI AD SOYAD/UNVAN", at: CGPoint(x: 302, y: 255), size: 8, bold: true)
+            for (n, line) in ["ÖRNEK ÜNİVERSİTESİ", "SPOR BİLİMLERİ", "FAKÜLTESİ DÖNER", "SERMAYE", "İŞLETMESİ"].enumerated() {
+                self.text(line, at: CGPoint(x: 422, y: 234 + CGFloat(n) * 10.4), size: 8)
+            }
+            self.text("İŞLEM TUTARI", at: CGPoint(x: 64, y: 300), size: 8, bold: true)
+            self.text("300,00 TL", at: CGPoint(x: 184, y: 300), size: 8)
+        }
+        let body = self.body(try reconstruct(document))
+        let text = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        for value in ["TR12 0006 4000 0011 2345 6789 01", "30.10.2026 14:12:09", "300,00 TL", "ÖRNEK ÜNİVERSİTESİ SPOR BİLİMLERİ FAKÜLTESİ DÖNER SERMAYE İŞLETMESİ"] {
+            XCTAssertTrue(text.contains(value), "\(value) must survive whole and in order")
+        }
+        // The IBAN's two lines share one table cell, broken where the source broke them.
+        let cells = body.components(separatedBy: "<table:table-cell").dropFirst()
+        let iban = try XCTUnwrap(cells.first { $0.contains("TR12 0006 4000 0011 2345") })
+        XCTAssertTrue(iban.contains("6789 01"))
+        XCTAssertTrue(iban.contains("<text:line-break/>"))
+    }
+
     func testPrivateSystemFontsMapToAWordFont() {
         XCTAssertEqual(PDFDocumentReconstruction.wordFamily(".SFNS-Regular_wdth_opsz110000"), "Arial")
         XCTAssertEqual(PDFDocumentReconstruction.wordFamily("SF Pro Text"), "Arial")

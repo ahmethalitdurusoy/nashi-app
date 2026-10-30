@@ -100,6 +100,8 @@ enum PDFDocumentReconstruction {
         var tableIndex = 0
         var imageIndex = 0
         var artwork = true
+        /// Inside form and table cells, lines keep their source breaks.
+        var keepLines = false
         /// Ruled tables recognised in the artwork, by `tableKey`.
         var grids: [String: Grid] = [:]
         mutating func span(_ run: Run, scale: Int = 100) -> String { "<text:span text:style-name=\"\(spanStyle(run.style, scale: scale))\">\(DocumentText.escapeXML(run.text))</text:span>" }
@@ -128,7 +130,16 @@ enum PDFDocumentReconstruction {
                 else if contentRight - rect.maxX < 4 && rect.minX - contentLeft > 60 { align = "end"; left = 0 }
             } else {
                 let ends = rows.dropLast().map(\.bounds.maxX)
-                if let widest = ends.max(), ends.allSatisfy({ widest - $0 < 2.5 }), widest - rect.minX > 120 { align = "justify" }
+                // Justified: the full lines end together and at least one was
+                // stretched beyond its natural width (a ragged two-line
+                // paragraph also has one "full" line).
+                let stretched = rows.dropLast().contains { row in
+                    let natural = row.cells.flatMap(\.runs).map { PDFDocumentReconstruction.width(of: $0.text, style: $0.style) }.reduce(0, +)
+                    return natural > 0 && row.cells.map(\.bounds.width).reduce(0, +) > natural * 1.015 + 1
+                }
+                if let widest = ends.max(), ends.allSatisfy({ widest - $0 < 2.5 }), widest - rect.minX > 120, stretched { align = "justify" }
+                // Lines of different lengths sharing one centre line are centred.
+                else if rows.allSatisfy({ abs($0.bounds.midX - rect.midX) < 3 }), rows.map(\.bounds.width).max()! - rows.map(\.bounds.width).min()! > 12, rect.minX - contentLeft > 12 { align = "center"; left = 0 }
             }
             // Keep the source line breaks: a substituted font that runs a
             // little wider is condensed instead of wrapping onto extra lines.
@@ -148,14 +159,21 @@ enum PDFDocumentReconstruction {
             }
             // Wrapped text keeps the source column width, so lines break where they did.
             let blockRight = rows.map(\.bounds.maxX).max() ?? rect.maxX
-            let rightIndent = rows.count > 1 ? max(0, contentRight - blockRight - 1) : 0
+            // A line ended by the author (the next line's first word would have
+            // fitted) keeps its break; a wrapped line flows. The width gets a
+            // little room for font metrics, but never enough to pull a word up.
+            func firstWord(_ row: Row) -> CGFloat { row.cells.first?.runs.first.map { PDFDocumentReconstruction.width(of: " " + String($0.text.split(separator: " ").first ?? ""), style: $0.style) } ?? 0 }
+            let ended = rows.indices.dropFirst().map { rows[$0 - 1].bounds.maxX + firstWord(rows[$0]) < blockRight - 1 }
+            let room = rows.indices.dropFirst().filter { !ended[$0 - 1] }.map { firstWord(rows[$0]) - (blockRight - rows[$0 - 1].bounds.maxX) - 0.5 }.min() ?? 0
+            let wraps = ended.contains(false)
+            let rightIndent = keepLines || rows.count == 1 || !wraps ? 0 : max(0, contentRight - blockRight - 1 - max(0, min(room, (blockRight - rect.minX) * 0.03)))
             let style = paragraphStyle(left: left, right: rightIndent, before: gap, lineHeight: lineHeight, size: first.fontSize, align: align, tabs: tabs)
             var content = ""
             for (line, row) in rows.enumerated() {
                 // Justified paragraphs keep each source line (Word stretches a
                 // line ending in a soft break), so the line count cannot change
                 // with a renderer's own spacing. Ragged text flows normally.
-                if line > 0 { content += align == "justify" ? " <text:line-break/>" : " " }
+                if line > 0 { content += align == "justify" || keepLines || ended[line - 1] ? " <text:line-break/>" : " " }
                 for (column, cell) in row.cells.enumerated() {
                     if column > 0 { content += "<text:tab/>" }
                     for run in cell.runs { content += span(run, scale: scale) }
@@ -495,6 +513,67 @@ enum PDFDocumentReconstruction {
         }
     }
 
+    /// Several column bands as one table. Columns come from the band with
+    /// the most columns; every other band's columns must each fall in one of
+    /// them (missing ones become empty cells), or nil keeps them separate.
+    private static func rows(_ bands: [Region], left: CGFloat, right: CGFloat, page: PDFPage, box: CGRect, margin: CGFloat, previousBottom: inout CGFloat, writer: inout Writer, options: OperationOptions, token: CancellationToken) throws -> String? {
+        let parts = bands.compactMap { band -> [(region: Region, left: CGFloat, right: CGFloat)]? in if case .columns(let parts) = band { return parts }; return nil }
+        guard parts.count == bands.count, let guide = parts.max(by: { $0.count < $1.count }) else { return nil }
+        let guideEdges = guide.dropLast().map(\.right)
+        func content(_ region: Region) -> (minX: CGFloat, maxX: CGFloat) { let b = region.blocks.map(\.bounds); return (b.map(\.minX).min() ?? 0, b.map(\.maxX).max() ?? 0) }
+        var layout: [[Int: Region]] = []
+        var spans = [(minX: CGFloat, maxX: CGFloat)](repeating: (.greatestFiniteMagnitude, -.greatestFiniteMagnitude), count: guide.count)
+        for band in parts {
+            var cells: [Int: Region] = [:]
+            for part in band {
+                let extent = content(part.region), middle = (extent.minX + extent.maxX) / 2
+                let column = guideEdges.filter { $0 < middle }.count
+                guard cells[column] == nil else { return nil }
+                cells[column] = part.region
+                spans[column] = (min(spans[column].minX, extent.minX), max(spans[column].maxX, extent.maxX))
+            }
+            layout.append(cells)
+        }
+        // Column lines from every band's content: halfway across each gutter.
+        guard (0..<(spans.count - 1)).allSatisfy({ spans[$0].maxX < spans[$0 + 1].minX - 2 }) else { return nil }
+        let edges = (0..<(spans.count - 1)).map { (spans[$0].maxX + spans[$0 + 1].minX) / 2 }
+        let grids = writer.grids
+        let extents = bands.map { band -> (top: CGFloat, bottom: CGFloat) in let e = band.blocks.map { extent($0, grids: grids) }; return (e.map(\.top).max()!, e.map(\.bottom).min()!) }
+        // Row lines halfway between bands, where the source's row shading changes.
+        var lines = [extents[0].top]
+        for index in 1..<extents.count { lines.append((extents[index - 1].bottom + extents[index].top) / 2) }
+        lines.append(extents[extents.count - 1].bottom)
+        var xml = ""
+        if previousBottom - lines[0] > 0.5 { xml += "<text:p text:style-name=\"\(writer.paragraphStyle(left: 0, before: 0, lineHeight: previousBottom - lines[0], size: 1))\"/>" }
+        let name = "Layout\(writer.tableIndex)"; writer.tableIndex += 1
+        let bounds = [left] + edges + [right]
+        writer.styles += "<style:style style:name=\"\(name)\" style:family=\"table\"><style:table-properties table:align=\"left\" style:width=\"\(right - left)pt\" fo:margin-left=\"0pt\" fo:margin-top=\"0pt\" fo:margin-bottom=\"0pt\"/></style:style>"
+        writer.styles += "<style:style style:name=\"\(name)Cell\" style:family=\"table-cell\"><style:table-cell-properties fo:border=\"none\" fo:padding=\"0pt\" style:vertical-align=\"top\"/></style:style>"
+        var columns = ""
+        for index in 0..<(bounds.count - 1) {
+            let column = "\(name)Column\(index)"
+            writer.styles += "<style:style style:name=\"\(column)\" style:family=\"table-column\"><style:table-column-properties style:column-width=\"\(bounds[index + 1] - bounds[index])pt\"/></style:style>"
+            columns += "<table:table-column table:style-name=\"\(column)\"/>"
+        }
+        var body = ""
+        let outerKeep = writer.keepLines; writer.keepLines = true; defer { writer.keepLines = outerKeep }
+        for (row, cells) in layout.enumerated() {
+            try token.check()
+            let rowStyle = "\(name)Row\(row)"
+            writer.styles += "<style:style style:name=\"\(rowStyle)\" style:family=\"table-row\"><style:table-row-properties style:min-row-height=\"\(max(1, lines[row] - lines[row + 1]))pt\"/></style:style>"
+            body += "<table:table-row table:style-name=\"\(rowStyle)\">"
+            for column in 0..<(bounds.count - 1) {
+                var cellTop = lines[row]
+                var content = try cells[column].map { try emit($0, left: bounds[column], right: bounds[column + 1], page: page, box: box, margin: margin, previousBottom: &cellTop, writer: &writer, options: options, token: token) } ?? ""
+                if content.isEmpty || content.hasSuffix("</table:table>") { content += "<text:p text:style-name=\"DocumentEnd\"/>" }
+                body += "<table:table-cell table:style-name=\"\(name)Cell\" office:value-type=\"string\">\(content)</table:table-cell>"
+            }
+            body += "</table:table-row>"
+        }
+        previousBottom = min(previousBottom, lines[lines.count - 1])
+        return xml + "<table:table table:name=\"\(name)\" table:style-name=\"\(name)\">\(columns)\(body)</table:table>"
+    }
+
     private static func emit(_ region: Region, left: CGFloat, right: CGFloat, page: PDFPage, box: CGRect, margin: CGFloat, previousBottom: inout CGFloat, writer: inout Writer, options: OperationOptions, token: CancellationToken) throws -> String {
         // Writer positions content inside `frame`'s margins; a column is a
         // narrower frame with the same margin arithmetic.
@@ -502,7 +581,21 @@ enum PDFDocumentReconstruction {
         switch region {
         case .stack(let parts):
             var xml = ""
-            for part in parts { xml += try emit(part, left: left, right: right, page: page, box: box, margin: margin, previousBottom: &previousBottom, writer: &writer, options: options, token: token) }
+            var index = 0
+            while index < parts.count {
+                // Consecutive bands split into compatible columns are one table:
+                // one row per band, columns shared, so values line up like the
+                // source's rows and its row shading.
+                if case .columns = parts[index] {
+                    var end = index + 1
+                    while end < parts.count, case .columns = parts[end] { end += 1 }
+                    if end - index >= 2, let merged = try rows(Array(parts[index..<end]), left: left, right: right, page: page, box: box, margin: margin, previousBottom: &previousBottom, writer: &writer, options: options, token: token) {
+                        xml += merged; index = end; continue
+                    }
+                }
+                xml += try emit(parts[index], left: left, right: right, page: page, box: box, margin: margin, previousBottom: &previousBottom, writer: &writer, options: options, token: token)
+                index += 1
+            }
             return xml
         case .flow(let blocks):
             // Lines of one column re-join into paragraphs once their
@@ -548,6 +641,7 @@ enum PDFDocumentReconstruction {
                 writer.styles += "<style:style style:name=\"\(column)\" style:family=\"table-column\"><style:table-column-properties style:column-width=\"\(part.right - part.left)pt\"/></style:style>"
                 columns += "<table:table-column table:style-name=\"\(column)\"/>"
                 var cellBottom = top
+                let outerKeep = writer.keepLines; writer.keepLines = true; defer { writer.keepLines = outerKeep }
                 var content = try emit(part.region, left: part.left, right: part.right, page: page, box: box, margin: margin, previousBottom: &cellBottom, writer: &writer, options: options, token: token)
                 // A cell must end in a paragraph (and may not be empty).
                 if content.isEmpty || content.hasSuffix("</table:table>") { content += "<text:p text:style-name=\"DocumentEnd\"/>" }
@@ -595,6 +689,7 @@ enum PDFDocumentReconstruction {
             if rect.isNull || rect.isInfinite || rect.width <= 0 || rect.height <= 0 { continue }
             glyphs.append(Cell(runs: [.init(text: value, style: style(attributes, readableOnWhite: readableOnWhite))], bounds: rect))
         }
+        glyphs = settle(glyphs, page: page)
         glyphs = horizontal(glyphs, page: box)
         var rows = rows(glyphs)
         var ink = glyphs.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }.map { ($0.bounds, Optional($0.runs[0].style.color)) }
@@ -610,6 +705,72 @@ enum PDFDocumentReconstruction {
             rows.sort { $0.bounds.midY > $1.bounds.midY }
         }
         return PageText(rows: rows, ink: ink, scanned: false, photographic: photographic)
+    }
+
+    /// Places each glyph on its real baseline. A selection's bounds are the
+    /// box of the whole line PDFKit assembled around it, and PDFKit can join
+    /// lines from neighbouring table cells (one cell's second line with the
+    /// next cell's centred label), giving both a merged, misplaced box. Exact
+    /// per-glyph boxes come from characterBounds(at:), whose indices drift
+    /// from the string's by a few places; they are matched back by x position
+    /// within a small window, in reading order.
+    private static func settle(_ glyphs: [Cell], page: PDFPage) -> [Cell] {
+        let count = page.numberOfCharacters
+        guard count > 0, !glyphs.isEmpty else { return glyphs }
+        let exact = (0..<count).map { page.characterBounds(at: $0) }
+        // Candidates by x (half-point buckets); the drift between the two
+        // index spaces varies along the page, so the whole page is searched.
+        var byX: [Int: [Int]] = [:]
+        for (index, rect) in exact.enumerated() where rect.width > 0 { byX[Int((rect.minX * 2).rounded()), default: []].append(index) }
+        var cursor = 0
+        var baselines = [CGFloat?](repeating: nil, count: glyphs.count)
+        for (index, glyph) in glyphs.enumerated() where !glyph.text.trimmingCharacters(in: .whitespaces).isEmpty {
+            let x = glyph.bounds.minX, tolerance = max(1.0, glyph.fontSize * 0.15)
+            let key = Int((x * 2).rounded()), reach = Int((tolerance * 2).rounded(.up))
+            let widthTolerance: CGFloat = max(1.2, glyph.fontSize * 0.2)
+            let lowest: CGFloat = glyph.bounds.minY - 1, highest: CGFloat = glyph.bounds.maxY - glyph.fontSize * 0.3
+            var candidates: [Int] = []
+            for bucket in (key - reach)...(key + reach) {
+                for candidate in byX[bucket] ?? [] {
+                    let r = exact[candidate]
+                    guard abs(r.minX - x) < tolerance, abs(r.maxX - glyph.bounds.maxX) < widthTolerance, r.minY >= lowest, r.minY <= highest else { continue }
+                    candidates.append(candidate)
+                }
+            }
+            guard let match = candidates.min(by: { abs($0 - cursor) < abs($1 - cursor) }) else { continue }
+            cursor = match + 1
+            // PDFKit's (line) box always contains the glyph itself; a match
+            // outside it is a different glyph that happens to share an x.
+            if exact[match].height > 0.5, exact[match].minY >= glyph.bounds.minY - 1, exact[match].minY <= glyph.bounds.maxY - glyph.fontSize * 0.3 { baselines[index] = exact[match].minY }
+        }
+        // One baseline per run of adjacent glyphs from the same PDFKit line:
+        // the median of its matches, so a stray match (an apostrophe, another
+        // glyph at the same x) cannot pull a letter off its line, and letters
+        // with descenders sit on the run's baseline. A PDFKit line that joined
+        // two table cells splits at the gap between them.
+        var runStart = 0
+        for index in 1...glyphs.count {
+            let ends = index == glyphs.count || {
+                let a = glyphs[index - 1], b = glyphs[index], size = max(a.fontSize, b.fontSize)
+                // A wide space glyph bridges two cells without leaving a gap.
+                func gap(_ c: Cell) -> Bool { c.text.trimmingCharacters(in: .whitespaces).isEmpty && c.bounds.width > c.fontSize * 0.8 }
+                return abs(a.bounds.minY - b.bounds.minY) > 0.1 || abs(a.bounds.height - b.bounds.height) > 0.1 || b.bounds.minX - a.bounds.maxX > size * 1.2 || b.bounds.maxX < a.bounds.minX || gap(a) || gap(b)
+            }()
+            guard ends else { continue }
+            let values = baselines[runStart..<index].compactMap { $0 }.sorted()
+            let median = values.isEmpty ? nil : values[values.count / 2]
+            for i in runStart..<index { baselines[i] = median }
+            runStart = index
+        }
+        return glyphs.enumerated().map { index, glyph in
+            guard let base = baselines[index] else { return glyph }
+            var settled = glyph
+            // A text-face box (descender ≈ 19%, ascender ≈ 81% of 1.15 em),
+            // the same proportions baseline(_:) reads back.
+            let height = glyph.fontSize * 1.15
+            settled.bounds = CGRect(x: glyph.bounds.minX, y: base - height * 0.19, width: glyph.bounds.width, height: height)
+            return settled
+        }
     }
 
     private static func ocrRows(_ cells: [PDFOfficeCodec.TextCell]) -> [Row] {
@@ -787,7 +948,8 @@ enum PDFDocumentReconstruction {
     private static func furniture(_ pages: [(box: CGRect, rows: [Row])]) -> Furniture {
         var result = Furniture()
         result.removed = Array(repeating: [], count: pages.count)
-        guard pages.count >= 2 else { return result }
+        // Labels, cards and other small pages have no running header/footer.
+        guard pages.count >= 2, pages.allSatisfy({ $0.box.height >= 300 }) else { return result }
         func key(_ row: Row) -> String { row.text.replacingOccurrences(of: "[0-9]+", with: "#", options: .regularExpression).trimmingCharacters(in: .whitespaces) }
         let needed = max(2, Int((Double(pages.count) * 0.6).rounded(.up)))
         for band in [true, false] {

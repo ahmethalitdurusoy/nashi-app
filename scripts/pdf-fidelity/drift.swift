@@ -25,6 +25,29 @@ import PDFKit
                 if abs(dy)>2 || abs(dx)>3 { print(String(format:"p%d  dy=%+6.1f dx=%+6.1f  %@",index+1,dy,dx,probe)) }
             }
         }
-        print(String(format:"lines=%d missing=%d worst|dy|=%.1fpt",total,missing,worst))
+        // Every run of digit-bearing tokens on a source line (IBANs, amounts,
+        // dates, reference numbers) must appear, in order, in the output text.
+        func normalise(_ text: String) -> String { text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ") }
+        let output = normalise((0..<roundtrip.pageCount).compactMap { roundtrip.page(at: $0)?.string }.joined(separator: " "))
+        var checked = 0, broken: [String] = []
+        for index in pages {
+            guard let source = original.page(at: index) else { continue }
+            for line in (source.string ?? "").components(separatedBy: .newlines) {
+                let tokens = line.components(separatedBy: .whitespaces).filter { $0.rangeOfCharacter(from: .decimalDigits) != nil && $0.count >= 2 }
+                guard !tokens.isEmpty else { continue }
+                // Consecutive digit tokens form one sequence (an IBAN's groups).
+                var sequences: [[String]] = [[]]
+                for word in line.components(separatedBy: .whitespaces) where !word.isEmpty {
+                    if tokens.contains(word) { sequences[sequences.count - 1].append(word) } else if !sequences[sequences.count - 1].isEmpty { sequences.append([]) }
+                }
+                for sequence in sequences where !sequence.isEmpty {
+                    checked += 1
+                    let joined = sequence.joined(separator: " ")
+                    if !output.contains(joined) { broken.append(joined) }
+                }
+            }
+        }
+        for item in broken { print("TOKENS NOT FOUND  \(item)") }
+        print(String(format:"lines=%d missing=%d worst|dy|=%.1fpt tokens=%d broken=%d",total,missing,worst,checked,broken.count))
     }
 }
