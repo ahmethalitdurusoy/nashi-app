@@ -40,6 +40,14 @@ final class WebDownloadTests:XCTestCase {
         for flag in ["--ignore-config","--no-plugin-dirs","--no-remote-components","--no-playlist","--no-overwrites"] { XCTAssertTrue(args.contains(flag)) }
         XCTAssertEqual(Array(args.suffix(2)),["--",url.absoluteString]);XCTAssertTrue(args.contains(where:{$0.contains("height<=?720")}));XCTAssertFalse(args.contains(where:{$0.contains("cookies")}))
     }
+    func testVideoDownloadsPreferH264() throws {
+        let url=try WebDownloadEngine.link("https://example.org/reel/1")
+        let info=try WebDownloadEngine.parseMetadata(Data(#"{"formats":[{"height":1920,"vcodec":"vp9"},{"height":1920,"vcodec":"avc1.640028"}]}"#.utf8),url:url)
+        let args=try WebDownloadEngine.downloadArguments(info,mode:.video,maximumHeight:nil,directory:URL(fileURLWithPath:"/tmp/stage"))
+        let sort=try XCTUnwrap(args.firstIndex(of:"--format-sort"))
+        XCTAssertTrue(args[sort+1].hasPrefix("vcodec:h264"),"H.264 plays in QuickTime, Finder and on iPhone; VP9/AV1 play as sound only")
+        XCTAssertEqual(WebDownloadEngine.playableCodecs,["h264","hevc"])
+    }
     func testProcessTimeoutAndCancellation() throws {
         let start=Date()
         XCTAssertThrowsError(try WebDownloadProcess.run(URL(fileURLWithPath:"/bin/sleep"),["30"],token:.init(),timeout:0.1))

@@ -109,11 +109,40 @@ public enum WebDownloadEngine {
                 try enforceVideoHeight(results,maximum:maximumHeight,directory:area.directory,token:token,progress:progress)
             }.value
         }
+        if mode == .video || (mode == .original && info.kind == .video && !info.direct) {
+            try await Task.detached {
+                try enforcePlayableVideo(results,directory:area.directory,token:token,progress:progress)
+            }.value
+        }
         progress(OperationProgress.indeterminate,"Finishing your file…")
         try transaction.record(results,in:area)
         let output=try transaction.publish(token:token)
         progress(1,"Saved to \(destination.lastPathComponent)")
         return output
+    }
+
+    /// Video codecs every Apple device plays (QuickTime, Finder preview,
+    /// Photos, iPhone, Keynote) and Windows plays out of the box.
+    static let playableCodecs:Set<String>=["h264","hevc"]
+
+    // Many sites now serve VP9 or AV1 only. An .mp4 with VP9/AV1 video plays
+    // as sound with a black or missing picture in QuickTime and Finder, so
+    // such files are re-encoded to H.264 (the sound is kept as it is).
+    static func enforcePlayableVideo(_ files:[URL],directory:URL,token:CancellationToken,progress:@escaping ProgressHandler) throws {
+        for file in files {
+            try token.check()
+            guard let video=try MediaEngine.inspect(file,token:token).video,!playableCodecs.contains(video.codec.lowercased()) else { continue }
+            progress(OperationProgress.indeterminate,"Making the video playable on every device…")
+            var options=OperationOptions();options.outputDirectory=directory
+            let converted=try MediaEngine.convert(file,to:"mp4",options:options,token:token,progress:{ value,_ in progress(value,"Making the video playable on every device…") })
+            guard converted.count==1,let replacement=converted.first,
+                  let codec=try MediaEngine.inspect(replacement,token:token).video?.codec,playableCodecs.contains(codec.lowercased()) else {
+                throw NashiError.failed("The video could not be converted to a widely playable format.")
+            }
+            try token.check()
+            try FileManager.default.removeItem(at:file)
+            try FileManager.default.moveItem(at:replacement,to:file)
+        }
     }
 
     // Some sites omit dimensions or report stale values for their direct formats.
@@ -154,7 +183,9 @@ public enum WebDownloadEngine {
         case .audioMP3:args += ["--format","bestaudio/best","--extract-audio","--audio-format","mp3","--audio-quality","0"]
         case .video:
             let limit=maximumHeight.map{"[height<=?\($0)]"} ?? ""
-            args += ["--format","bestvideo[ext=mp4]\(limit)+bestaudio[ext=m4a]/best[ext=mp4]\(limit)/bestvideo\(limit)+bestaudio/best\(limit)","--merge-output-format","mp4","--remux-video","mp4"]
+            // H.264 first (plays everywhere), then the highest resolution.
+            args += ["--format","bestvideo[ext=mp4]\(limit)+bestaudio[ext=m4a]/best[ext=mp4]\(limit)/bestvideo\(limit)+bestaudio/best\(limit)",
+                     "--format-sort","vcodec:h264,res,acodec:aac","--merge-output-format","mp4","--remux-video","mp4"]
         case .original:args += ["--format","bestaudio/best"]
         }
         return args+["--",info.url.absoluteString]
