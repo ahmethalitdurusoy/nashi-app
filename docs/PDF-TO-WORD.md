@@ -17,7 +17,8 @@ PDF.
 | Placed photos and screenshots | Separate pictures at their exact position. |
 | Everything else — page colour, rules, charts, logos, signatures, stamps, seals, watermarks | The page artwork: the page rendered with the editable text lifted out, anchored behind the text. |
 | Text set at an angle (seal rings, stamps, diagonal watermarks) | Stays in the artwork instead of turning into stray letters. |
-| Scanned pages and pictures of text | On-device OCR (Turkish and English); the recognised lines become editable text in their own ink colour, and the scan without that text becomes the artwork. |
+| Scanned pages and pictures of text | On-device OCR with automatic language detection (Turkish, English, Russian, Ukrainian, German, French, Spanish, Italian, Portuguese). A page that is mostly Cyrillic is read a second time with Russian/Ukrainian first, so letters are not turned into Latin look-alikes. The recognised lines become editable text in their own ink colour, and the scan without that text becomes the artwork. |
+| Phone photos of a document (paper on a desk, tilted or in perspective) | The sheet is found, cut out and flattened before OCR, like a scanner app: the Word page has the paper's proportions (842pt on its long side), lines are horizontal and the desk is gone. Born-digital pages, flatbed scans and "keep pages as pictures" are left exactly as they are. |
 
 Glyph positions come from PDFKit's per-character bounds, not from selection
 boxes: PDFKit can join lines from neighbouring cells into one "line" (a
@@ -69,3 +70,23 @@ with UForge's engine, re-exports the DOCX to PDF and writes, per page:
 
 Output lands in `build/pdf-fidelity/compare/`. Unit tests for the individual
 behaviours are in `Tests/NashiCoreTests/PDFLayoutReconstructionTests.swift`.
+
+## Scanned and photographed pages
+
+A photographed page (paper on a desk, tilted or in perspective) is first cut
+to the paper and flattened by `PDFScanRectification`, then converted with the
+regular reconstruction path. Once the page is axis-aligned and desk-free:
+
+- **Box/frame detection is enabled** even though the page is a scan. The
+  framed sections and shaded bands of a utility bill become real Word tables
+  with cell borders and shading, the same as native-text PDFs.
+- **Artwork resolution is higher** (3x instead of 2.5x) so QR codes, fine
+  print and ruled grids stay sharp in the background layer.
+- **JPEG quality is higher** (88% instead of 82%) to preserve camera
+  detail and avoid blurring ruled lines.
+- **Text erasure tolerance is wider** (85 instead of 70) because camera
+  text has softer anti-aliased edges. The wider tolerance erases the ink
+  cleanly, leaving a smooth background behind the editable text.
+- **Multi-word OCR lines are split at wide gaps** so that side-by-side
+  columns (amounts next to labels, payment totals next to their headings)
+  are recognised as separate table cells.
